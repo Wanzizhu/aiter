@@ -986,7 +986,7 @@ end
 function init_buffer_default(reg s_buf)
   s_mov_b32 s_buf[2], Vsrc95_64
   s_mov_b32 s_buf[3], Vsrc127_96
-  s_and_b32 s_buf[1], s_buf[1], 0xffff
+  s_and_b32 s_buf[1], s_buf[1], 0x1ffffff
   s_or_b32  s_buf[1], s_buf[1], Vsrc63_48
 end
 
@@ -1036,26 +1036,6 @@ end
 // Section 8: Block Table Lookup (PAGED ATTENTION SPECIFIC)
 // ============================================================================
 
-// BTPREFETCH: issue-only variant. Caller hoists this earlier than the TDM
-// emit so the kmcnt drain overlaps intervening work. The wait happens later
-// inside the *_TDM_load_half function. Loads sample their address SGPRs at
-// issue time, so re-using s_tmp0/s_tmp1/s_tmp2 between the two issues is
-// safe — the first s_load has already captured its address before the
-// second s_lshl/s_add clobbers them.
-function block_table_lookup_pair_issue(reg page_first, reg page_second)
-  // First lookup (writes s_phys_blk_idx)
-  s_lshl_b32   s_tmp2, page_first, 2
-  s_add_u32    s_tmp0, s_KVIndices_addr[0], s_tmp2
-  s_addc_u32   s_tmp1, s_KVIndices_addr[1], 0
-  s_load_dword s_phys_blk_idx, s_tmp0, 0x0
-
-  // Second lookup (writes s_phys_blk_idx_aux)
-  s_lshl_b32   s_tmp2, page_second, 2
-  s_add_u32    s_tmp0, s_KVIndices_addr[0], s_tmp2
-  s_addc_u32   s_tmp1, s_KVIndices_addr[1], 0
-  s_load_dword s_phys_blk_idx_aux, s_tmp0, 0x0
-end
-
 // UNILOAD (Opt-40) + BTMERGE (Opt-42): K and V at the same iter target the
 // SAME logical page → SAME physical block. One BT lookup serves both. K_TDM
 // lookup writes s_phys_blk_idx; K_TDM_load_half copies s_V_phys_blk_idx <-
@@ -1070,24 +1050,39 @@ function K_TDM_lookup_issue
   s_sub_i32    s_tdm_page_aux, s_loader_base_page, s_tdm_page
   s_add_u32    s_tmp0, s_KVIndices_addr[0], s_tmp2
   s_addc_u32   s_tmp1, s_KVIndices_addr[1], 0
+  s_and_b32    s_tmp1, s_tmp1, 0x1ffffff              // 25-bit aperture mask
   s_load_dword s_phys_blk_idx, s_tmp0, 0x0
 end
 
 function compute_K_phys_addr
-  s_mul_i32    s_tmp0, s_phys_blk_idx, s_K_blk_stride
-  s_mul_i32    s_tmp1, s_KV_head, s_K_head_stride
-  s_add_i32    s_tmp0, s_tmp0, s_tmp1
-  s_add_u32    s_tmp0, s_K_addr[0], s_tmp0
-  s_addc_u32   s_tmp1, s_K_addr[1], 0
+  // ADDR64: phys_blk_idx * blk_stride is the byte offset into the KV cache and
+  // can exceed 2^32 on a multi-GB cache (e.g. 32K blocks * 128KB/block = 4GB).
+  // s_mul_i32 alone truncates to 32 bits, so capture the high half with
+  // s_mul_hi_u32 and carry it into the base's high dword. The head term
+  // (kv_head * head_stride) is bounded by num_kv_heads * page bytes (<<4GB), so
+  // it stays 32-bit and is folded into the low word (carry propagated).
+  s_mul_i32    s_tmp0, s_phys_blk_idx, s_K_blk_stride   // block offset low
+  s_mul_hi_u32 s_tmp3, s_phys_blk_idx, s_K_blk_stride   // block offset high (>4GB safe)
+  s_mul_i32    s_tmp1, s_KV_head, s_K_head_stride        // head offset (32-bit)
+  s_add_u32    s_tmp0, s_tmp0, s_tmp1                     // low += head offset
+  s_addc_u32   s_tmp3, s_tmp3, 0                          // propagate carry into high
+  s_add_u32    s_tmp0, s_K_addr[0], s_tmp0               // + base low
+  s_addc_u32   s_tmp1, s_K_addr[1], s_tmp3               // + base high + offset high (+carry)
+  s_and_b32    s_tmp1, s_tmp1, 0x1ffffff              // 25-bit aperture mask
   setup_TDM_global_addr(s_K_g0, s_K_g1, s_tmp0)
 end
 
 function compute_V_phys_addr
-  s_mul_i32    s_tmp0, s_V_phys_blk_idx, s_V_blk_stride
-  s_mul_i32    s_tmp1, s_KV_head, s_V_head_stride
-  s_add_i32    s_tmp0, s_tmp0, s_tmp1
-  s_add_u32    s_tmp0, s_V_addr[0], s_tmp0
-  s_addc_u32   s_tmp1, s_V_addr[1], 0
+  // ADDR64: see compute_K_phys_addr. V_phys_blk_idx * V_blk_stride is the byte
+  // offset into the (multi-GB) V cache and must be computed in 64 bits.
+  s_mul_i32    s_tmp0, s_V_phys_blk_idx, s_V_blk_stride  // block offset low
+  s_mul_hi_u32 s_tmp3, s_V_phys_blk_idx, s_V_blk_stride  // block offset high (>4GB safe)
+  s_mul_i32    s_tmp1, s_KV_head, s_V_head_stride         // head offset (32-bit)
+  s_add_u32    s_tmp0, s_tmp0, s_tmp1                     // low += head offset
+  s_addc_u32   s_tmp3, s_tmp3, 0                          // propagate carry into high
+  s_add_u32    s_tmp0, s_V_addr[0], s_tmp0               // + base low
+  s_addc_u32   s_tmp1, s_V_addr[1], s_tmp3               // + base high + offset high (+carry)
+  s_and_b32    s_tmp1, s_tmp1, 0x1ffffff              // 25-bit aperture mask
   setup_TDM_global_addr(s_V_g0, s_V_g1, s_tmp0)
 end
 
@@ -1259,6 +1254,7 @@ function Q_compute_addr
   s_add_u32    s_tmp0, s_tmp0,   s_tmp1
   s_add_u32    s_tmp0, s_Q_addr[0], s_tmp0
   s_addc_u32   s_tmp1, s_Q_addr[1], 0
+  s_and_b32    s_tmp1, s_tmp1, 0x1ffffff              // 25-bit aperture mask
 
   // Per-lane offset for M-tile 0:
   //   row    = l & 0xf
@@ -1520,6 +1516,8 @@ function K_TDM_load_half(param buf_idx)
   s_mov_b32     s_K_g1[4], s_tmp0                        // TILE1
 
   tensor_load_to_lds s_K_g0, s_K_g1, null, null
+  s_wait_idle      // ALLSYNC: drain this load
+  wgp_barrier()    // ALLSYNC: cross-wave sync after load
 end
 
 function V_TDM_init
@@ -1563,6 +1561,8 @@ function V_TDM_load_half(param buf_idx)
   s_mov_b32  s_V_g1[2], s_tmp0                           // DIM1 (in-range; TILE0/1 from V_TDM_init)
 
   tensor_load_to_lds s_V_g0, s_V_g1, null, null
+  s_wait_idle      // ALLSYNC: drain this load
+  wgp_barrier()    // ALLSYNC: cross-wave sync after load
 end
 
 // ============================================================================
@@ -1677,6 +1677,8 @@ function K_LDS_load(param msb, param buf_idx)
                  + pair * K_LDS_DHI_STRIDE
       set_vgpr_msb(QUIET, v_K[msb], v_K_LDS_issue_addr)
       ds_load_b64 v_8bit(v_K[msb][idx]), v_K_LDS_issue_addr[addr_idx] offset: offset
+      s_wait_idle      // ALLSYNC: drain this load
+      wgp_barrier()    // ALLSYNC: cross-wave sync after load
     end
   end
   // MSB-CO: break this call's last ds_load -> next K_LDS_load(msb+1)'s
@@ -2872,6 +2874,84 @@ end
 pa_border_mask_done:
 end
 
+// ============================================================================
+// VMASK: zero V entries whose token index >= s_seq_len (kv_seq_len padding).
+// ============================================================================
+// When kv_seq_len is not a multiple of PAGE_SIZE the last KV page holds
+// uninitialized V bytes for tokens [seq_len, page_end). The score border mask
+// already drives P=0 for those tokens, but a stale fp8-NaN V byte makes the PV
+// WMMA compute 0*NaN = NaN, which cross_wave_reduce then spreads across the
+// whole row (same failure class as the VOOBLOAD note in V_TDM_load_half).
+// Zeroing the OOB V bytes makes the masked PV a clean 0. Mirrors apply_V_mask
+// in PA_A16W8_BLK1024_1TG_8W_48mx1_64nx4_MTP_PS_PB.sp3 (adapted to this
+// kernel's wave32 16x16x128 V WMMA-A layout).
+//
+// V WMMA-A operand layout (see V_LDS_rd_addr_gen / pa_gemm_pv):
+//   lane = {K[3], M[3:0]}, vgpr = {K[6], K[5], K[4], K[2]}, byte = K[1:0]
+//   For v_V[msb][k_batch*16 + j], lane l, byte b the global token is
+//     tok = s_kv_cur_offset + k_batch*128
+//         + 64*((j>>3)&1) + 32*((j>>2)&1) + 16*((j>>1)&1) + 4*(j&1)  // vgpr bits
+//         + 8*(l>>4)                                                  // K[3]=lane[4]
+//         + b                                                         // K[1:0]
+//   The 4 bytes of one vgpr are 4 consecutive tokens, so a per-vgpr byte mask
+//   keeps the low (seq_len - tok_base) bytes, exactly like the score tail mask.
+//   msb selects only the HeadDim group, so the same token mask applies to all 4.
+function apply_V_mask
+  // OPT: skip when the whole page is < seq_len (no padding tokens this page).
+  // SIGNED compare: s_kv_cur_offset and s_seq_len share the batch-token domain.
+  s_add_i32    s_tmp0, s_kv_cur_offset, PAGE_SIZE
+  s_cmp_ge_i32 s_seq_len, s_tmp0
+  s_cbranch_scc1 apply_V_mask_done
+
+  // Scalar base = s_kv_cur_offset - s_seq_len + 4. Adding the per-vgpr static
+  // token offset below yields (tok_base + 4 - seq_len) for the byte-mask trick.
+  s_sub_i32 s_tmp1, s_kv_cur_offset, s_seq_len
+  s_add_i32 s_tmp1, s_tmp1, 4
+
+  // Per-lane: v_tmp0 = s_tmp1 + 8*lane[4]   (lane[4] = v0>>4 selects K[3])
+  set_vgpr_msb(QUIET, v_tmp1, v0, v0)
+  v_lshrrev_b32 v_tmp1, 4, v0
+  set_vgpr_msb(QUIET, v_tmp1, v0, v_tmp1)
+  v_lshlrev_b32 v_tmp1, 3, v_tmp1
+  set_vgpr_msb(QUIET, v_tmp0, v0, v_tmp1)
+  v_add_nc_u32  v_tmp0, s_tmp1, v_tmp1
+
+  for var k_batch in [0:1]
+    for var j in [0:KV_VGPR_PER_MSB / 2 - 1]      // j = 0..15 (vgpr within batch)
+      var base_wb    = 64 * ((j >> 3) & 1) + 32 * ((j >> 2) & 1) \
+                     + 16 * ((j >> 1) & 1) + 4 * (j & 1)
+      var static_off = k_batch * 128 + base_wb
+      var idx        = k_batch * 16 + j
+
+      // v_tmp1 = tok_base + 4 - seq_len   // vcc = (>=1 valid byte in this vgpr).
+      set_vgpr_msb(QUIET, v_tmp1, v_tmp0)
+      v_add_nc_i32  v_tmp1, v_tmp0, static_off
+      set_vgpr_msb(QUIET, v0, v_tmp1, v0)
+      v_cmp_lt_i32  vcc, v_tmp1, 4
+      // byte-mask = 0xffffffff >> (min_u32(4, v_tmp1) * 8): keeps the low valid
+      // bytes. min_u32 maps fully-valid (v_tmp1<0 → huge unsigned) to 4 → the
+      // <<3=32 shift wraps mod 32 to 0 → mask 0xffffffff (keep all).
+      set_vgpr_msb(QUIET, v_tmp1, v0, v_tmp1)
+      v_min_u32     v_tmp1, 4, v_tmp1
+      v_lshlrev_b32 v_tmp1, 3, v_tmp1
+      set_vgpr_msb(QUIET, v_tmp2, v_tmp1, v0)
+      v_lshrrev_b32 v_tmp2, v_tmp1, 0xffffffff
+
+      for var msb in [0:NUM_MSB_SEGMENTS - 1]
+        // Fully-OOB vgprs (vcc==0) -> 0  // partial vgprs keep low bytes via AND.
+        set_vgpr_msb(QUIET, v_V[msb], v0, v_V[msb])
+        v_cndmask_b32 v_8bit(v_V[msb][idx]), 0, v_8bit(v_V[msb][idx]), vcc
+        set_vgpr_msb(QUIET, v_V[msb], v_V[msb], v_tmp2)
+        v_and_b32     v_8bit(v_V[msb][idx]), v_8bit(v_V[msb][idx]), v_tmp2
+      end
+    end
+  end
+  // The V-mask VALU writes must retire before the PV WMMA reads v_V. Only the
+  // non-skipped (padding) path needs this; full pages branch over it above.
+  s_wait_alu { va_vdst: 0 }
+apply_V_mask_done:
+end
+
 // Shuffle FP8 P from softmax-quant layout to GEMM_PV-contiguous layout.
 //
 // After softmax-quant, for each (sp_msb, m_tile) the 8 FP8 VGPRs occupying
@@ -3137,6 +3217,8 @@ function gemm_qk_phase(param buf_idx, param next_buf_idx, param do_prefetch, par
                  + msb_v * V_DIM_PER_MSB * 16
       set_vgpr_msb(QUIET, v_V[msb_v], v_V_LDS_issue_addr)
       ds_load_b64 v_8bit(v_V[msb_v][idx]), v_V_LDS_issue_addr[addr_idx] offset: offset
+      s_wait_idle      // ALLSYNC: drain this load
+      wgp_barrier()    // ALLSYNC: cross-wave sync after load
     end
     // MSB-CO: s_set_vgpr_msb cannot co-execute with ds_load. The ds_load_b64
     // above are followed at the next w by pa_gemm_qk's s_set_vgpr_msb (QK
@@ -3209,11 +3291,10 @@ pv_phase_skip_k_sync_buf0:
 pv_phase_skip_k_sync_buf1:
     end
   end
-
-  // VLDS-REHOIST (Opt-41): V_LDS_load moved back to qk_phase head — see
-  // comment there. v_V ds_loads overlap pa_gemm_qk WMMA. The dscnt drain
-  // below covers them along with K_LDS_ds_issue from this and prior phases.
-  s_wait_dscnt 0
+  // VMASK: zero stale/OOB V bytes (tokens >= seq_len) now that v_V is coherent
+  // and before any PV WMMA reads it, so a padding-page fp8-NaN cannot turn the
+  // border-masked 0*V into NaN. Self-gated: full pages branch out immediately.
+  apply_V_mask()
 
   // UNIDS (Opt-52): pure per-WMMA uniform distribution. 64 K b64 spread
   // 4 b64/WMMA across all 16 pv WMMAs (was: 32 upfront msb 0,1 + 32
@@ -3263,6 +3344,8 @@ pv_phase_skip_k_sync_buf1:
                      + pair * K_LDS_DHI_STRIDE
           set_vgpr_msb(QUIET, v_K[msb_k], v_K_LDS_issue_addr)
           ds_load_b64 v_8bit(v_K[msb_k][idx]), v_K_LDS_issue_addr[addr_idx] offset: offset
+          s_wait_idle      // ALLSYNC: drain this load
+          wgp_barrier()    // ALLSYNC: cross-wave sync after load
         end
         salu_rlts = issue_n_table(salu_calls, salu_rlts, 1)
         // MSB-CO: break the K-LDS ds_load -> next-w pa_gemm_pv s_set_vgpr_msb
@@ -3298,6 +3381,8 @@ pv_phase_skip_k_sync_buf1:
                      + pair * K_LDS_DHI_STRIDE
           set_vgpr_msb(QUIET, v_K[msb_k], v_K_LDS_issue_addr)
           ds_load_b64 v_8bit(v_K[msb_k][idx]), v_K_LDS_issue_addr[addr_idx] offset: offset
+          s_wait_idle      // ALLSYNC: drain this load
+          wgp_barrier()    // ALLSYNC: cross-wave sync after load
         end
         salu_rlts = issue_n_table(salu_calls, salu_rlts, 1)
         // MSB-CO: break the K-LDS ds_load -> next-w pa_gemm_pv s_set_vgpr_msb
@@ -3332,6 +3417,8 @@ function core_loop_iteration(param buf_idx, param next_buf_idx, param first_iter
 
   // ========== Masking + Softmax Phase ==========
   pa_border_mask()
+  s_wait_dscnt 0
+  wgp_barrier()
 
   // VTDM-MID (Opt-55A): V TDM issued here, after masking, separated from K TDM
   // by the full pa_border_mask() compute (~30-40 VALU). K TDM has had time to
@@ -3496,6 +3583,8 @@ function cross_wave_reduce
     for var w in [0:WAVES - 1]
       set_vgpr_msb(QUIET, v_corr[w * G1_M_TILES + m], v_tmp0)
       ds_load_b32 v_8bit(v_corr[w * G1_M_TILES + m][0]), v_tmp0 offset: REDUCE_MAX_OFFSET + w * REDUCE_MAX_STRIDE_WAVE + m * REDUCE_MAX_STRIDE_M
+      s_wait_idle      // ALLSYNC: drain this load
+      wgp_barrier()    // ALLSYNC: cross-wave sync after load
       v_nop   // MSB-CO: break ds_load_b32 -> next-iter s_set_vgpr_msb adjacency
     end
   end
@@ -3548,6 +3637,8 @@ function cross_wave_reduce
     for var w in [0:WAVES - 1]
       set_vgpr_msb(QUIET, v_K[0], v_tmp0)
       ds_load_b32 v_8bit(v_K[0][m * WAVES + w]), v_tmp0 offset: REDUCE_L_OFFSET + w * REDUCE_MAX_STRIDE_WAVE + m * REDUCE_MAX_STRIDE_M
+      s_wait_idle      // ALLSYNC: drain this load
+      wgp_barrier()    // ALLSYNC: cross-wave sync after load
       v_nop   // MSB-CO: break ds_load_b32 -> next-iter s_set_vgpr_msb adjacency
     end
   end
@@ -3593,6 +3684,8 @@ function cross_wave_reduce
       var idx = i_off * WAVES + w
       set_vgpr_msb(QUIET, xwr_buf[0], v_tmp0)
       ds_load_b32 v_8bit(xwr_buf[0][idx]), v_tmp0 offset: REDUCE_R_OFFSET + w * REDUCE_R_STRIDE_WAVE + gidx * BYTES_PER_VGRP
+      s_wait_idle      // ALLSYNC: drain this load
+      wgp_barrier()    // ALLSYNC: cross-wave sync after load
     end
   end
 
@@ -3614,6 +3707,8 @@ function cross_wave_reduce
           var idx = i_off * WAVES + w
           set_vgpr_msb(QUIET, xwr_buf[k + 1], v_tmp0)
           ds_load_b32 v_8bit(xwr_buf[k + 1][idx]), v_tmp0 offset: REDUCE_R_OFFSET + w * REDUCE_R_STRIDE_WAVE + gidx * BYTES_PER_VGRP
+          s_wait_idle      // ALLSYNC: drain this load
+          wgp_barrier()    // ALLSYNC: cross-wave sync after load
         end
       end
       // MSB-CO: break the last next-batch ds_load -> the consume loop's
@@ -3643,6 +3738,20 @@ function cross_wave_reduce
       end
     end
   end
+
+  // XWR-EXIT-BARRIER: the reduce region (REDUCE_LDS_BASE == K_LDS_BASE, spanning
+  // tiles 0/1/2) is READ by every wave above, fenced only by per-wave
+  // s_wait_dscnt 0 — there was NO cross-wave barrier after the Phase-2/3 reads.
+  // After returning, wave 1/2/3 skip the store and re-enter work_loop_start,
+  // issuing the next work-item's K/V TDM into their own LDS tiles (1/2/3); those
+  // tiles overlap the reduce-R region (+2048..+34816 B). A fast wave's next-iter
+  // TDM write could land while a slow wave is still reading the reduce region ->
+  // poisoned cross-wave O. The 3486 barrier only guards the WRITES, not the
+  // reads. Add a final barrier so all waves finish their reduce reads before any
+  // wave can advance and overwrite that LDS. Placed at the END of reduce (not at
+  // work_done) so wave 0's store still overlaps wave 1/2/3's next-iter prefetch
+  // — safe because R_store stages only into tile 0 (wave 0's own UNILOAD tile).
+  wgp_barrier()
 end
 
 // ----------------------------------------------------------------------------
@@ -3779,6 +3888,62 @@ function store_partial_results
 
   // buffer_store_* requires an SGPR/M0 soffset operand on this assembler.
   s_mov_b32 m0, 0
+
+  // SINK-SPLIT: the OWNER of this row (s_KV_start == s_KV_batch_start, i.e. the
+  // work item covering the row's FIRST KV chunk; also the direct-O case) merges
+  // the per-row sink into v_L/v_max and folds row_scale into v_R HERE — before the
+  // SplitLSE/SplitO stores — so the owner's stored partial carries the sink
+  // exactly once. Non-owner splits skip it, so the (sink-free) reduce sums the
+  // sink in once via the owner's partial. Mirrors pa_normalize's do_sink merge but
+  // keeps fp32 partials and folds row_scale directly into v_R (pa_normalize(0)
+  // below then applies value_scale * 1/L'). v_SINK was loaded ONLY on the owner.
+  if ENABLE_SINK == 1
+    s_cmp_eq_i32 s_KV_start, s_KV_batch_start            // row's first KV chunk?
+    s_cbranch_scc0 skip_split_sink                       // non-owner -> no sink
+    s_mov_b32 exec_lo, 0xFFFFFFFF                        // merge all rows
+    s_wait_loadcnt 0                                     // sink load (prologue) ready
+    // stash v_SINK (shares v_L[0]'s overrun slot) into the now-dead v_SINK_addr[0]
+    set_vgpr_msb(QUIET, v_SINK_addr[0], v_SINK)
+    v_mov_b32 v_8bit(v_SINK_addr[0]), v_8bit(v_SINK)
+    for var m in [0:G1_M_TILES - 1]
+      // new_max = max(v_max[m], v_SINK)  -> v_tmp0
+      set_vgpr_msb(QUIET, v_tmp0, v_max[m], v_SINK_addr[0])
+      v_max_f32 v_8bit(v_tmp0), v_8bit(v_max[m]), v_8bit(v_SINK_addr[0])
+      // row_scale = exp2((v_max[m]-new_max)*scl) -> v_p_quant_mul[m][0] (kept for v_R)
+      set_vgpr_msb(QUIET, v_tmp1, v_max[m], v_tmp0)
+      v_sub_f32 v_8bit(v_tmp1), v_8bit(v_max[m]), v_8bit(v_tmp0)
+      set_vgpr_msb(QUIET, v_tmp1, v_tmp1, v_scl_log2e[m])
+      v_mul_f32 v_8bit(v_tmp1), v_8bit(v_tmp1), v_8bit(v_scl_log2e[m])
+      s_wait_alu { va_vdst: 0 }
+      set_vgpr_msb(QUIET, v_p_quant_mul[m][0], v_tmp1)
+      v_exp_f32 v_8bit(v_p_quant_mul[m][0]), v_8bit(v_tmp1)
+      // sink_term = exp2((v_SINK-new_max)*scl) -> v_tmp1
+      set_vgpr_msb(QUIET, v_tmp1, v_SINK_addr[0], v_tmp0)
+      v_sub_f32 v_8bit(v_tmp1), v_8bit(v_SINK_addr[0]), v_8bit(v_tmp0)
+      set_vgpr_msb(QUIET, v_tmp1, v_tmp1, v_scl_log2e[m])
+      v_mul_f32 v_8bit(v_tmp1), v_8bit(v_tmp1), v_8bit(v_scl_log2e[m])
+      set_vgpr_msb(QUIET, v_tmp1, v_tmp1)
+      v_exp_f32 v_8bit(v_tmp1), v_8bit(v_tmp1)
+      // L = L*row_scale + sink_term
+      s_wait_alu { va_vdst: 0 }
+      set_vgpr_msb(QUIET, v_L[m], v_L[m], v_p_quant_mul[m][0], v_tmp1)
+      v_fma_f32 v_8bit(v_L[m]), v_8bit(v_L[m]), v_8bit(v_p_quant_mul[m][0]), v_8bit(v_tmp1)
+      // v_max[m] = new_max
+      set_vgpr_msb(QUIET, v_max[m], v_tmp0)
+      v_mov_b32 v_8bit(v_max[m]), v_8bit(v_tmp0)
+      // fold row_scale into v_R[2m],v_R[2m+1] (O was accumulated rel. to old max)
+      set_vgpr_msb(QUIET, v_p_quant_mul[m], v_p_quant_mul[m])
+      v_mov_b32 v_8bit(v_p_quant_mul[m][1]), v_8bit(v_p_quant_mul[m][0])
+      for var r_seg in [2 * m : 2 * m + 1]
+        set_vgpr_msb(QUIET, v_R[r_seg], v_R[r_seg], v_p_quant_mul[m])
+        for var i in [0:2:R_VGPR_SECT_SIZE - 1]
+          v_pk_mul_f32 v_8bit(v_R[r_seg][i]), v_8bit(v_R[r_seg][i]), v_8bit(v_p_quant_mul[m])
+        end
+      end
+    end
+  skip_split_sink:
+    reset_vgpr_msb()
+  end
 
   // ---- Store SplitLSE FP32 before v_L is changed to reciprocal by normalization.
   // Host reduce expects partial_lse[partial_o_loc + mtp_layer][kv_head*gqa + gqa_id].
@@ -3928,6 +4093,7 @@ function R_store_to_global
   s_add_i32    s_tmp0, s_tmp0, s_tmp1
   s_add_u32    s_R_addr[0], s_R_addr[0], s_tmp0
   s_addc_u32   s_R_addr[1], s_R_addr[1], 0
+  s_and_b32    s_R_addr[1], s_R_addr[1], 0x1ffffff    // 25-bit aperture mask
 
   // ---- Phase 1: Store D to row-major LDS ----
   // For GEMM_PV we call WMMA as A=V, B=P, so WMMA-D is D[M=head_dim, N=query].
@@ -4009,6 +4175,7 @@ function R_store_to_global
       s_cbranch_scc0 r_store_done
       s_add_u32     s_R_addr[0], s_R_addr[0], s_R_mtp_stride
       s_addc_u32    s_R_addr[1], s_R_addr[1], 0
+      s_and_b32     s_R_addr[1], s_R_addr[1], 0x1ffffff   // 25-bit aperture mask
       // Advance LDS pointer by 8 rows (one MTP block)  // reverse the 4-chunk
       // backward step that brought v_tmp0 back to the start of prev mtp's
       // first row -> need: +8 rows from prev mtp's start = +8*144 from prev
@@ -4060,36 +4227,39 @@ shader main
   tgid_y_en(1)
   tgid_z_en(1)
 
-  set_sched_mode(2)   // Expert scheduling mode
+  set_sched_mode(0)   // Expert scheduling mode
 
   // ===== Load kernel arguments =====
   s_and_b32            s1, s1, 0x1ffffff
 
+  // ABI: softmax_scale (by value) sits at 0x60, just after CtxLen; the per-tensor
+  // scale POINTERS and all following args are therefore each shifted +0x10
+  // relative to the pre-softmax_scale layout (QScale 0x70 .. Sink 0x160).
   s_load_dwordx2       s_R_addr,           s[0:1], 0x0
   s_load_dwordx2       s_Q_addr,           s[0:1], 0x10
   s_load_dwordx2       s_K_addr,           s[0:1], 0x20
   s_load_dwordx2       s_V_addr,           s[0:1], 0x30
   s_load_dwordx2       s_KVIndices_addr,   s[0:1], 0x40
   s_load_dwordx2       s_CtxLen_addr,      s[0:1], 0x50
-  s_load_dword         s_KV_nheads,        s[0:1], 0x90
-  s_load_dword         s_Q_mtp_stride,     s[0:1], 0xA0    // one FP8 Q MTP layer in bytes
-  s_load_dword         s_K_blk_stride,     s[0:1], 0xB0
-  s_load_dword         s_K_head_stride,    s[0:1], 0xC0
-  s_load_dword         s_mtp,              s[0:1], 0xD0
-  s_load_dword         s_gqa_ratio,        s[0:1], 0xE0
-  // 0xF0 QOIndptr is accepted for PA_PS interface compatibility but unused  //
+  s_load_dword         s_KV_nheads,        s[0:1], 0xA0
+  s_load_dword         s_Q_mtp_stride,     s[0:1], 0xB0    // one FP8 Q MTP layer in bytes
+  s_load_dword         s_K_blk_stride,     s[0:1], 0xC0
+  s_load_dword         s_K_head_stride,    s[0:1], 0xD0
+  s_load_dword         s_mtp,              s[0:1], 0xE0
+  s_load_dword         s_gqa_ratio,        s[0:1], 0xF0
+  // 0x100 QOIndptr is accepted for PA_PS interface compatibility but unused  //
   // q/o layout is fixed by mtp/gqa for this decode kernel.
-  s_load_dwordx2       s_KVIndptr_addr,    s[0:1], 0x100
-  s_load_dwordx2       s_WorkIdx_addr,     s[0:1], 0x110
-  s_load_dwordx2       s_WorkInfo_addr,    s[0:1], 0x120
-  s_load_dwordx2       s_PartialO_addr,    s[0:1], 0x130
-  s_load_dwordx2       s_PartialLSE_addr,  s[0:1], 0x140
+  s_load_dwordx2       s_KVIndptr_addr,    s[0:1], 0x110
+  s_load_dwordx2       s_WorkIdx_addr,     s[0:1], 0x120
+  s_load_dwordx2       s_WorkInfo_addr,    s[0:1], 0x130
+  s_load_dwordx2       s_PartialO_addr,    s[0:1], 0x140
+  s_load_dwordx2       s_PartialLSE_addr,  s[0:1], 0x150
 
   // W1: hoist the 3 scale-address loads up here so all 14 dwordx2 args batch
   // into a single s_wait_kmcnt 0 below (was: 11 + wait + 3 + wait).
-  s_load_dwordx2 s_R_base_addr, s[0:1], 0x60   // QScale_addr
-  s_load_dwordx2 s_tmp0,        s[0:1], 0x70   // KScale_addr (s_tmp0:s_tmp1)
-  s_load_dwordx2 s_tmp2,        s[0:1], 0x80   // VScale_addr (s_tmp2:s_tmp3)
+  s_load_dwordx2 s_R_base_addr, s[0:1], 0x70   // QScale_addr
+  s_load_dwordx2 s_tmp0,        s[0:1], 0x80   // KScale_addr (s_tmp0:s_tmp1)
+  s_load_dwordx2 s_tmp2,        s[0:1], 0x90   // VScale_addr (s_tmp2:s_tmp3)
 
   // ===== SPI input processing =====
   v_and_b32            v0, 0x1f, v0
@@ -4158,22 +4328,31 @@ shader main
   init_buffer_default(s_PartialLSE_addr)
 
   // ===== Compute derived constants =====
-  // Fold scalar Q/K scales and log2(e) into s_key_scale once so the softmax
-  // path consumes query_scale * key_scale * log2(e). s_log2e is only kept for
-  // existing softmax math that needs ln(2).
+  // Fold scalar Q/K scales, softmax_scale and log2(e) into s_key_scale once so
+  // the softmax path consumes query_scale * key_scale * softmax_scale * log2(e).
+  // s_log2e is only kept for existing softmax math that needs ln(2).
   s_mov_b32   s_log2e,     kLog2eF32       // temporary for ln(2)=1/log2(e)
   set_vgpr_msb(QUIET)
   v_mov_b32   v_tmp0, s_log2e
   v_rcp_f32   v_tmp1, v_tmp0
   v_readfirstlane_b32 s_loge2, v_tmp1
-  // W2: slid scale-value wait down here — covers the 3 s_load_dwords above,
-  // overlapping their latency with init_buffer_default + log2e setup.
+  // softmax_scale (by-value f32 kernarg, 0x60). The SGPR file is full, so reuse
+  // the temporary s_tmp0: it is dead here (last touched by the wave-0 prefetch)
+  // and is re-initialized fresh below in the stride math. Issued before the W2
+  // wait so that wait drains it alongside the 3 scale-value loads.
+  s_load_dword s_tmp0, s[0:1], 0x60
+  // W2: slid scale-value wait down here — covers the 3 s_load_dwords above plus
+  // the softmax_scale load, overlapping their latency with init_buffer_default
+  // + log2e setup.
   s_wait_kmcnt 0
   v_mov_b32   v_tmp0, s_key_scale
   v_mov_b32   v_tmp1, s_query_scale
   set_vgpr_msb(QUIET, v_tmp0, v_tmp0, v_tmp1)
   v_mul_f32   v_tmp0, v_tmp0, v_tmp1
   v_mov_b32   v_tmp1, s_log2e
+  set_vgpr_msb(QUIET, v_tmp0, v_tmp0, v_tmp1)
+  v_mul_f32   v_tmp0, v_tmp0, v_tmp1
+  v_mov_b32   v_tmp1, s_tmp0               // softmax_scale (by-value, 0x160)
   set_vgpr_msb(QUIET, v_tmp0, v_tmp0, v_tmp1)
   v_mul_f32   v_tmp0, v_tmp0, v_tmp1
   v_readfirstlane_b32 s_key_scale, v_tmp0
@@ -4195,6 +4374,18 @@ shader main
 work_loop_start:
   s_cmp_lt_i32        s_work_start, s_work_end
   s_cbranch_scc0      program_exit
+
+  // VGPR-MSB RE-ENTRY FIX: work_loop_start is a branch target. On the back-edge
+  // from a split work item, the partial-store tail leaves the HW VGPR MSB at
+  // dst_msb=3 (last s_set_vgpr_msb before the back-edge). The per-work setup
+  // below — notably the ENABLE_SINK address build `v_and v_SINK_addr[0], v0, 7`
+  // — reads v0 (lane id, segment 0) and other scratch assuming MSB=0, but its
+  // set_vgpr_msb(QUIET,...) is ELIDED because the compile-time tracker assumes
+  // the prologue's MSB=0 (it can't see the back-edge state). Result on varlen
+  // re-entry: v0 is read from segment 3 (garbage) -> wild per-lane sink address
+  // -> page fault. Force MSB back to 0 here so runtime matches the tracker on
+  // every iteration (no-op cost on the first, prologue-entered iteration).
+  reset_vgpr_msb()
 
   // Load ps::WORK_INFO (8 dwords).
   s_lshl_b32          s_tmp0, s_work_start, 5
@@ -4236,7 +4427,7 @@ work_loop_start:
   // KVIndptr have already SAMPLED s_tmp0 above so it can be overwritten now.
   // Sharing the existing s_wait_kmcnt 0 below avoids any extra wait.
   if ENABLE_SINK == 1
-    s_load_dwordx2    s_tmp0, s[0:1], 0x150
+    s_load_dwordx2    s_tmp0, s[0:1], 0x160
   end
 
   // WorkInfo layout: batch, partial_o_loc, qo_start, qo_end, kv_start,
@@ -4260,6 +4451,13 @@ work_loop_start:
   // (s_wait_loadcnt 0 there, hidden under the full K-loop runtime).
   if ENABLE_SINK == 1
     s_and_b32     s_tmp1, s_tmp1, 0x1ffffff              // 25-bit aperture mask
+    // MSB SELF-CONTAIN: the sink address build reads v0 (lane id, segment 0). The
+    // set_vgpr_msb(QUIET,...) below is elided when the tracker already reads 0, so
+    // it relies on the upstream work_loop_start reset_vgpr_msb() (which forces the
+    // back-edge's inherited MSB=3 back to 0). Force it locally so this path is
+    // self-contained — a future edit inserting MSB code between work_loop_start and
+    // here can't reintroduce the segment-3 garbage-v0 page fault. Cost: 1 SALU.
+    reset_vgpr_msb()
     set_vgpr_msb(QUIET, v_SINK_addr[0], v0)
     v_and_b32     v_SINK_addr[0], v0, 7
     v_lshlrev_b32 v_SINK_addr[0], 2, v_SINK_addr[0]      // (lane & 7) * 4
@@ -4272,13 +4470,17 @@ work_loop_start:
     v_add_co_ci_u32    v_SINK_addr[1], vcc, s_tmp1, 0, vcc
     s_wait_alu { va_vdst: 0 }                            // vmem reads v_SINK_addr
     set_vgpr_msb(QUIET, v_SINK, v_SINK_addr)
-    // The sink is consumed ONLY in the direct-O finalize (do_sink==1, i.e.
-    // partial_o_loc == -1). For split work items it is merged later in the
-    // host/GPU reduce, so the per-lane sink load must be SKIPPED here -- issuing
-    // it on the split path regresses that path (page fault). Gate just the load
-    // (no set_vgpr_msb is branched over, so the VGPR-MSB tracking is intact).
-    s_cmp_eq_i32   s_partial_idx, -1                     // direct-O work item?
-    s_cbranch_scc0 skip_sink_load                        // split -> skip the load
+    // SINK-OWNER: the sink is a per-row virtual logit that must be added to the
+    // softmax denominator EXACTLY ONCE per row. A row's KV range may be split
+    // across several work items; the OWNER is the one covering the row's first KV
+    // chunk, identified by s_KV_start == s_KV_batch_start (the scheduler always
+    // emits the first chunk with cur_block==0 -> kv_start == kvp[batch]; this also
+    // covers the direct-O case, partial_o_loc==-1, which is the whole tile). Load
+    // the sink ONLY on the owner; non-owner splits skip it and skip the merge in
+    // store_partial_results, so the sink is never double-counted. (set_vgpr_msb is
+    // not branched over, so VGPR-MSB tracking is intact.)
+    s_cmp_eq_i32   s_KV_start, s_KV_batch_start          // owner = row's first KV chunk?
+    s_cbranch_scc0 skip_sink_load                        // non-owner -> skip the load
     global_load_b32 v_SINK, v_SINK_addr, off             // vaddr64, off
   skip_sink_load:
   end
@@ -4463,6 +4665,27 @@ core_loop_exit:
   // ===== Cross-Wave Reduction (combine 4 waves' partial max/L/D) =====
   cross_wave_reduce()
 
+  // SINK-DOMAIN (Triton / GPT-OSS match): the in-kernel sink merge multiplies the
+  // sink by scl_log2e (= query*key*softmax*log2e = s_eff*log2e), i.e. it treats the
+  // sink as a RAW pre-scale logit -> contributes exp(sink*s_eff). Triton/GPT-OSS
+  // define the sink as a SCALED-domain logit (compared directly to (q.k)*s_eff) ->
+  // exp(sink). Pre-divide the loaded sink by s_eff ONCE here (sink load issued in
+  // the prologue is long complete) so the merge's *s_eff cancels:
+  //   exp((sink/s_eff)*s_eff) = exp(sink).  Callers now pass self.sinks directly.
+  // s_eff = s_key_scale * ln2   (s_key_scale = query*key*softmax*log2e; s_loge2=ln2).
+  // Unconditional (compile-gated): non-owner split items never read v_SINK, so a
+  // divided-garbage value there is inert.
+  if ENABLE_SINK == 1
+    s_wait_loadcnt 0
+    reset_vgpr_msb()
+    v_mov_b32   v_tmp0, s_key_scale
+    v_mul_f32   v_tmp0, v_tmp0, s_loge2          // s_eff
+    s_wait_alu { va_vdst: 0 }
+    v_rcp_f32   v_tmp0, v_tmp0                   // 1 / s_eff
+    s_wait_alu { va_vdst: 0 }
+    v_mul_f32   v_SINK, v_SINK, v_tmp0           // sink := sink / s_eff (scaled-domain)
+  end
+
   // ===== Output current work =====
   // partial_idx == -1: this work covers the final KV chunk for its Q tile and
   // can write final bf16 O. Otherwise write FP32 SplitO/SplitLSE for host reduce.
@@ -4482,6 +4705,7 @@ partial_output_path:
 
 work_done:
   s_wait_idle
+  wgp_barrier()     
   s_add_i32 s_work_start, s_work_start, 1
   s_branch work_loop_start
 
