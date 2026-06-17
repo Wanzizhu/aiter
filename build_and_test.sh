@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build sp3 -> .co and run pa_decode test.
 # Usage:
-#   bash build_and_test.sh                   # build + run default test (bs=1 varlen)
+#   bash build_and_test.sh                   # build + run default test from run.sh
 #   bash build_and_test.sh build             # build only
 #   bash build_and_test.sh test              # test only (skip build)
 #   bash build_and_test.sh "test_args"       # build + run with custom test args
@@ -21,11 +21,17 @@ SP3_SRC="$BUILD_DIR/PA_DECODE_D64_1TG_4W_PS.sp3"
 CO_TARGET="$AITER_DIR/hsa/gfx1250/pa_decode_bf16/pa_decode_bf16_d64_page256_gqa8.co"
 CO_BACKUP="$CO_TARGET.bak"
 TEST_SCRIPT="$AITER_DIR/op_tests/test_pa_decode_bf16_asm.py"
+DEFAULT_TEST_ARGS="-b 65 -kvh 8 -c 16385 8193 --varlen -m 0 1 2 3 --scales 1.69 1.7329 1.2276 --sink"
 
 MODE="${1:-all}"
-TEST_ARGS="${1:--b 1 -kvh 1 -c 1024 -m 0 --scales 1.69 1.7329 1.2276 --varlen}"
+TEST_ARGS="${1:-$DEFAULT_TEST_ARGS}"
 
-export HIP_VISIBLE_DEVICES=2 
+export PATH="/opt/rocm-7.13-95/bin:$PATH"
+export LD_LIBRARY_PATH="/opt/rocm-7.13-95/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export HIP_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES:-3}"
+export ENABLE_CK="${ENABLE_CK:-0}"
+export ENABLE_FLYDSL="${ENABLE_FLYDSL:-0}"
+export AITER_REBUILD="${AITER_REBUILD:-1}"
 
 do_build() {
     echo "========================================"
@@ -53,8 +59,12 @@ do_test() {
     local args="$1"
     echo "========================================"
     echo "Running test: python $TEST_SCRIPT $args"
+    echo "  PATH=$PATH"
+    echo "  LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+    echo "  HIP_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES ENABLE_CK=$ENABLE_CK ENABLE_FLYDSL=$ENABLE_FLYDSL AITER_REBUILD=$AITER_REBUILD"
     echo "========================================"
     cd "$AITER_DIR"
+    rm -f aiter/jit/module_pa*
     python "$TEST_SCRIPT" $args
     echo ""
     echo "Test done."
@@ -75,16 +85,18 @@ case "$MODE" in
         ;;
     test)
         shift
-        do_test "${*:--b 1 -kvh 1 -c 1024 -m 0 --scales 1.69 1.7329 1.2276 --varlen}"
+        do_test "${*:-$DEFAULT_TEST_ARGS}"
         ;;
     restore)
         do_restore
         ;;
     all)
         do_build
+        do_test "$DEFAULT_TEST_ARGS"
         ;;
     *)
         # Treat $MODE as test args: build + test with those args
         do_build
+        do_test "$*"
         ;;
 esac

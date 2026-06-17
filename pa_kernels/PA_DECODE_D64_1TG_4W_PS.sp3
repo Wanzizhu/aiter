@@ -3154,6 +3154,7 @@ function gemm_qk_phase(param buf_idx, param next_buf_idx, param do_prefetch, par
 
   // Dedicated V barrier marks the V-loader rendezvous point; V_LDS_load is
   // deferred to pv_phase head under VLDS-DEFER.
+  wgp_barrier()
 
   // Current KV absolute byte/token offset for per-row border mask.
   s_sub_i32  s_kv_cur_offset, s_page_idx, s_KV_batch_start
@@ -3269,6 +3270,13 @@ function gemm_pv_phase(param buf_idx, param next_buf_idx, param do_prefetch, par
       s_cbranch_scc1 pv_phase_skip_k_sync_buf1
     end
 
+    // Opt-43: pv-head wait dropped. Under UNILOAD steady-state inflight at
+    // pv-head = 3 (qk-head wait drained to 2, qk-tail K added 1), so the
+    // former wait_tensorcnt 4 never blocked. K LDS coherence for the
+    // upcoming K_LDS_ds_issue is provided by qk-head's wait_tensorcnt 2
+    // (which retired iter N-1's qk-tail K) + barrier below for cross-wave sync.
+    wgp_barrier()
+
     if buf_idx == 0
 pv_phase_skip_k_sync_buf0:
     else
@@ -3284,7 +3292,7 @@ pv_phase_skip_k_sync_buf1:
   // VMASK: zero stale/OOB V bytes (tokens >= seq_len) now that v_V is coherent
   // and before any PV WMMA reads it, so a padding-page fp8-NaN cannot turn the
   // border-masked 0*V into NaN. Self-gated: full pages branch out immediately.
-  s_wait_tensorcnt 2   // OPT53: tensorcnt 1 at pv-head
+  s_wait_tensorcnt 2   // OPT53: tensorcnt 2 at pv-head
   apply_V_mask()
 
   // UNIDS (Opt-52): pure per-WMMA uniform distribution. 64 K b64 spread
@@ -3405,6 +3413,7 @@ function core_loop_iteration(param buf_idx, param next_buf_idx, param first_iter
   // ========== Masking + Softmax Phase ==========
   pa_border_mask()
   s_wait_dscnt 0
+  wgp_barrier()
 
   // VTDM-MID (Opt-55A): V TDM issued here, after masking, separated from K TDM
   // by the full pa_border_mask() compute (~30-40 VALU). K TDM has had time to
