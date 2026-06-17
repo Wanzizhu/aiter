@@ -165,7 +165,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x84548152
 	.long 0x96536454
 	.long 0xbf043f3e
-	.long 0xbfa14dda
+	.long 0xbfa14de0
 	.long 0xbf860000
 	.long 0x8464853e
 	.long 0xf4007019
@@ -872,6 +872,8 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x7e0000a4
 	.long 0x7e000000
 	.long 0xbfcb0002
+	.long 0xbe804ec1
+	.long 0xbf94ffff
 	.long 0x81dd3d57
 	.long 0x845d885d
 	.long 0xbf860004
@@ -2948,28 +2950,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x7c8373b3
 	.long 0xbf8600cd
 	.long 0x027e7fb8
-	.long 0xbfc60000
-	.long 0xbfc70000
-	.long 0x96644f5b
-	.long 0x96e74f5b
-	.long 0x96655048
-	.long 0x80646564
-	.long 0x82678067
-	.long 0x80646424
-	.long 0x82656725
-	.long 0x8b65ff65
-	.long 0x01ffffff
-	.long 0xbe960164
-	.long 0x8c17ff17
-	.long 0x80000000
-	.long 0x8164ff61
-	.long 0x00028000
-	.long 0xbe950064
-	.long 0x84649090
-	.long 0xbe9a0064
-	.long 0xd0310000
-	.long 0x00000000
-	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd62a00ec
 	.long 0x04120702
@@ -4504,6 +4484,28 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x1803553c
 	.long 0xcc28003e
 	.long 0x1803553e
+	.long 0xbfc60000
+	.long 0xbfc70000
+	.long 0x96644f5b
+	.long 0x96e74f5b
+	.long 0x96655048
+	.long 0x80646564
+	.long 0x82678067
+	.long 0x80646424
+	.long 0x82656725
+	.long 0x8b65ff65
+	.long 0x01ffffff
+	.long 0xbe960164
+	.long 0x8c17ff17
+	.long 0x80000000
+	.long 0x8164ff61
+	.long 0x00028000
+	.long 0xbe950064
+	.long 0x84649090
+	.long 0xbe9a0064
+	.long 0xd0310000
+	.long 0x00000000
+	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd7690002
 	.long 0x00020702
@@ -4766,7 +4768,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x00027f3e
 	.long 0xbf068056
 	.long 0xbfa20000
-	.long 0xbfcb0002
 	.long 0x8164ff5d
 	.long 0x00000100
 	.long 0xbf03643c
@@ -5536,6 +5537,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0xbf8600c3
 	.long 0x373fc59f
 	.long 0xbf880f9f
+	.long 0xbfcb0003
 	.long 0xbf860000
 	.long 0xd726009f
 	.long 0x0001ff9a
@@ -5839,8 +5841,10 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x81578457
 	.long 0x81568156
 	.long 0xbf035556
-	.long 0xbfa226d5
+	.long 0xbfa226d9
 	.long 0xbfcb0002
+	.long 0xbe804ec1
+	.long 0xbf94ffff
 	.long 0x81dd3d57
 	.long 0x845d885d
 	.long 0xbf860034
@@ -7921,28 +7925,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x7c8373b3
 	.long 0xbf8600fd
 	.long 0x027e7fb8
-	.long 0xbfc60000
-	.long 0xbfc70000
-	.long 0x96644f5b
-	.long 0x96e74f5b
-	.long 0x96655048
-	.long 0x80646564
-	.long 0x82678067
-	.long 0x80646424
-	.long 0x82656725
-	.long 0x8b65ff65
-	.long 0x01ffffff
-	.long 0xbe960164
-	.long 0x8c17ff17
-	.long 0x80000000
-	.long 0x8164ff61
-	.long 0x00038000
-	.long 0xbe950064
-	.long 0x84649090
-	.long 0xbe9a0064
-	.long 0xd0310000
-	.long 0x00000000
-	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd62a00ec
 	.long 0x04120702
@@ -9479,6 +9461,28 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x1803553c
 	.long 0xcc28003e
 	.long 0x1803553e
+	.long 0xbfc60000
+	.long 0xbfc70000
+	.long 0x96644f5b
+	.long 0x96e74f5b
+	.long 0x96655048
+	.long 0x80646564
+	.long 0x82678067
+	.long 0x80646424
+	.long 0x82656725
+	.long 0x8b65ff65
+	.long 0x01ffffff
+	.long 0xbe960164
+	.long 0x8c17ff17
+	.long 0x80000000
+	.long 0x8164ff61
+	.long 0x00038000
+	.long 0xbe950064
+	.long 0x84649090
+	.long 0xbe9a0064
+	.long 0xd0310000
+	.long 0x00000000
+	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd7690002
 	.long 0x00020702
@@ -9741,7 +9745,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x00027f3e
 	.long 0xbf068056
 	.long 0xbfa20000
-	.long 0xbfcb0002
 	.long 0x8164ff5d
 	.long 0x00000100
 	.long 0xbf03643c
@@ -10511,6 +10514,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0xbf8600c3
 	.long 0x373fc59f
 	.long 0xbf880f9f
+	.long 0xbfcb0003
 	.long 0xbf860000
 	.long 0xd726009e
 	.long 0x0001019a
@@ -10810,8 +10814,10 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x81578457
 	.long 0x81568156
 	.long 0xbf035556
-	.long 0xbfa2136a
+	.long 0xbfa2136c
 	.long 0xbfcb0002
+	.long 0xbe804ec1
+	.long 0xbf94ffff
 	.long 0x81dd3d57
 	.long 0x845d885d
 	.long 0xbf860034
@@ -12888,28 +12894,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x7c8373b3
 	.long 0xbf8600fd
 	.long 0x027e7fb8
-	.long 0xbfc60000
-	.long 0xbfc70000
-	.long 0x96644f5b
-	.long 0x96e74f5b
-	.long 0x96655048
-	.long 0x80646564
-	.long 0x82678067
-	.long 0x80646424
-	.long 0x82656725
-	.long 0x8b65ff65
-	.long 0x01ffffff
-	.long 0xbe960164
-	.long 0x8c17ff17
-	.long 0x80000000
-	.long 0x8164ff61
-	.long 0x00028000
-	.long 0xbe950064
-	.long 0x84649090
-	.long 0xbe9a0064
-	.long 0xd0310000
-	.long 0x00000000
-	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd62a00ec
 	.long 0x04120702
@@ -14446,6 +14430,28 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x1803553c
 	.long 0xcc28003e
 	.long 0x1803553e
+	.long 0xbfc60000
+	.long 0xbfc70000
+	.long 0x96644f5b
+	.long 0x96e74f5b
+	.long 0x96655048
+	.long 0x80646564
+	.long 0x82678067
+	.long 0x80646424
+	.long 0x82656725
+	.long 0x8b65ff65
+	.long 0x01ffffff
+	.long 0xbe960164
+	.long 0x8c17ff17
+	.long 0x80000000
+	.long 0x8164ff61
+	.long 0x00028000
+	.long 0xbe950064
+	.long 0x84649090
+	.long 0xbe9a0064
+	.long 0xd0310000
+	.long 0x00000000
+	.long 0x7c7c1814
 	.long 0xbf860000
 	.long 0xd7690002
 	.long 0x00020702
@@ -14708,7 +14714,6 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x00027f3e
 	.long 0xbf068056
 	.long 0xbfa20000
-	.long 0xbfcb0002
 	.long 0x8164ff5d
 	.long 0x00000100
 	.long 0xbf03643c
@@ -15478,6 +15483,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0xbf8600c3
 	.long 0x373fc59f
 	.long 0xbf880f9f
+	.long 0xbfcb0003
 	.long 0xbf860000
 	.long 0xd726009f
 	.long 0x0001ff9a
@@ -15780,7 +15786,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0x1d3a155e
 	.long 0x81578457
 	.long 0x81568156
-	.long 0xbfa0d929
+	.long 0xbfa0d925
 	.long 0xbf8a0000
 	.long 0xbf068004
 	.long 0xbfa10004
@@ -20095,7 +20101,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0xbe804ec1
 	.long 0xbf94ffff
 	.long 0x813e813e
-	.long 0xbfa0b224
+	.long 0xbfa0b21e
 	.long 0xbf8a0000
 	.long 0xbfb00000
 	.long 0xbf800000
@@ -22151,7 +22157,7 @@ _ZN5aiter31pa_decode_bf16_d64_page256_gqa8E:
 	.long 0xbf9f0000
 	.long 0xbf9f0000
 	.long 0xbf9f0000
-; codeLenInByte = 88584
+; codeLenInByte = 88608
 	.p2alignl 7, 0xbf9f0000
 	.fill 96, 4, 0xbf9f0000
 

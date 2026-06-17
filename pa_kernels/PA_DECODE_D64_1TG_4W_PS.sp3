@@ -3270,13 +3270,6 @@ function gemm_pv_phase(param buf_idx, param next_buf_idx, param do_prefetch, par
       s_cbranch_scc1 pv_phase_skip_k_sync_buf1
     end
 
-    // Opt-43: pv-head wait dropped. Under UNILOAD steady-state inflight at
-    // pv-head = 3 (qk-head wait drained to 2, qk-tail K added 1), so the
-    // former wait_tensorcnt 4 never blocked. K LDS coherence for the
-    // upcoming K_LDS_ds_issue is provided by qk-head's wait_tensorcnt 2
-    // (which retired iter N-1's qk-tail K) + barrier below for cross-wave sync.
-    wgp_barrier()
-
     if buf_idx == 0
 pv_phase_skip_k_sync_buf0:
     else
@@ -3292,8 +3285,8 @@ pv_phase_skip_k_sync_buf1:
   // VMASK: zero stale/OOB V bytes (tokens >= seq_len) now that v_V is coherent
   // and before any PV WMMA reads it, so a padding-page fp8-NaN cannot turn the
   // border-masked 0*V into NaN. Self-gated: full pages branch out immediately.
-  s_wait_tensorcnt 2   // OPT53: tensorcnt 2 at pv-head
   apply_V_mask()
+  s_wait_tensorcnt 3   // OPT53: tensorcnt 2 at pv-head
 
   // UNIDS (Opt-52): pure per-WMMA uniform distribution. 64 K b64 spread
   // 4 b64/WMMA across all 16 pv WMMAs (was: 32 upfront msb 0,1 + 32
@@ -3412,19 +3405,7 @@ function core_loop_iteration(param buf_idx, param next_buf_idx, param first_iter
 
   // ========== Masking + Softmax Phase ==========
   pa_border_mask()
-  s_wait_dscnt 0
-  wgp_barrier()
 
-  // VTDM-MID (Opt-55A): V TDM issued here, after masking, separated from K TDM
-  // by the full pa_border_mask() compute (~30-40 VALU). K TDM has had time to
-  // progress through the TDM pipe alone, avoiding LDS write bandwidth doubling.
-  // V hide window from here = softmax (reduce + exp_chain + cvt) + pv_phase.
-  // NSM removes shuffle_P/pa_zero_R but the per-msb softmax is larger, so the
-  // hide window is no shorter than before.
-  // s_V_phys_blk_idx is still valid from K_TDM_load_half's BTMERGE copy.
-  if do_prefetch && !is_last
-    V_TDM_load_half(buf_idx)
-  end
 
   // ---- NSM softmax (per-msb staged; replaces per-m pa_fuesed_softmax) ----
   // Per-msb reduction: 4 sequential calls. msb=0/1/2 stage A only; msb=3 also
@@ -3441,6 +3422,11 @@ function core_loop_iteration(param buf_idx, param next_buf_idx, param first_iter
   // willa's reduce_msb (no separate pa_quant_broadcast / exp_chain(0) split).
   for var msb in [0:NUM_MSB_SEGMENTS - 1]
     issue_all(#pa_softmax_exp_chain_msb(msb), set_inst_user_data(START_RESULT, first_iter))
+  end
+
+  s_wait_dscnt 0
+  if do_prefetch && !is_last
+    V_TDM_load_half(buf_idx)
   end
 
   // P3b: WILLACVT — per-msb cvt P_quant → FP8 (BOTH row-bands per call) into the

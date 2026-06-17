@@ -1,0 +1,9 @@
+,batch,kvh,max_kv,mtp,varlen,pad_slots,det_zero,det_nan,det_zero_absmax,det_nan_absmax,det_zero_relmax,det_nan_relmax,nondeterministic,nan_zero,nan_nan,final_nan,vmask_split_mismatch,final_mismatch,bitmatch
+0,65,8,16385,0,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+1,65,8,16385,1,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+2,65,8,16385,2,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+3,65,8,16385,3,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+4,65,8,8193,0,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+5,65,8,8193,1,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+6,65,8,8193,2,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
+7,65,8,8193,3,False,16575,0,0,0.0,0.0,0.0,0.0,False,0,0,0,0,0,True
