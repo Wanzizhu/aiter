@@ -4,7 +4,12 @@
 """Grouped contiguous-M A8W4 preshuffle MoE GEMM for gfx1250 (TDM pipeline)."""
 
 import math
+import os
 from collections import namedtuple
+
+# Scratch: suppress ONLY the epilogue global stores. Loads, mainloop and quant
+# math are untouched; the store instructions still issue, with a runtime-0 extent.
+AITER_TDM_NO_STORE = int(os.environ.get("AITER_TDM_NO_STORE", "0"))
 
 import flydsl.compiler as flyc
 import flydsl.expr as fx
@@ -266,6 +271,7 @@ def launch_gemm_a8w4_tdm(
         f"_wpt{num_waves_per_tensor_tdm}" if num_waves_per_tensor_tdm != 2 else ""
     )
     _ep = "_epscatter" if enable_ep_scatter else ""
+    _nostore = "_nostore" if AITER_TDM_NO_STORE else ""
     # K defines the physical layouts and strides; REAL_K only shortens the
     # reduction loop for logically padded inputs.
     REAL_K = real_k if real_k else K
@@ -275,7 +281,7 @@ def launch_gemm_a8w4_tdm(
         f"_t{tile_m}x{tile_n}x{tile_k}_w{m_warp}x{n_warp}"
         f"_b{num_buffers}_K{K}{_real_k}"
         f"{_grouped}{_act}{_bias}{_qout}{_cl}{_next_stage}{_as_prologue}"
-        f"{_b_tdm_th}{_waves_per_tensor}{_ep}"
+        f"{_b_tdm_th}{_waves_per_tensor}{_ep}{_nostore}"
     )
 
     @flyc.kernel(name=_kname, known_block_size=[block, 1, 1])
@@ -379,6 +385,11 @@ def launch_gemm_a8w4_tdm(
         sb_batch_off = eb64 * (N_SUPERS * K4)
         # Per-expert A-data OOB: bound to the owning expert's valid-row
         mn_oob = tile_map[(expert < n_experts).select(expert, n_experts - 1)] - blk_m
+        store_oob = (
+            (i32_m < 0).select(mn_oob, mn_oob - mn_oob)
+            if AITER_TDM_NO_STORE
+            else mn_oob
+        )
 
         # Keep the complete workgroup allocation visible in kernel metadata.
         _smem = fx.SharedAllocator(static=True)
@@ -1396,7 +1407,7 @@ def launch_gemm_a8w4_tdm(
                                         )
 
                         # Preshuffled e8m0 scale: one branch per wm (not per mx_blk).
-                        if row_rel < mn_oob and is_kgrp0:
+                        if row_rel < store_oob and is_kgrp0:
                             for mx_blk in range_constexpr(N_MX_BLKS):
                                 scale_dw = mx_blk_is[mx_blk] >> 2
                                 byte_in_dw = mx_blk_is[mx_blk] & 3
@@ -1604,7 +1615,7 @@ def launch_gemm_a8w4_tdm(
                     gtC = tensor_view(
                         c_iter + c_off_rt, (tile_m, STORE_N), (STORE_N, 1)
                     )
-                    atomC = make_tdm_store(gtC, mn_oob, out_stride)
+                    atomC = make_tdm_store(gtC, store_oob, out_stride)
                     src = tensor_view(
                         fx.recast_iter(oc_store, base_ptr),
                         (tile_m, STORE_N),
@@ -1618,7 +1629,7 @@ def launch_gemm_a8w4_tdm(
                     )
                     atomC = fx.rocdl.make_tdm_atom(
                         gtC,
-                        [mn_oob, STORE_N],
+                        [store_oob, STORE_N],
                         strides=[out_stride, None],
                         num_warps=num_waves,
                     )
