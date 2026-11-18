@@ -1,62 +1,45 @@
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
-# Based on ROCm/ATOM 10b99a085ba46e5b3a125f0114cec7c71e401552,
-# atom/model_ops/blockscale_kernels/quantization.py (MIT).
+import torch
+import triton
+import triton.language as tl
+from aiter import dtypes
 
-from triton.experimental import gluon
-from triton.experimental.gluon import language as gl
-from triton.experimental.gluon.language.amd.cdna3 import buffer_load, buffer_store
-
-from aiter.ops.triton.utils._triton.kernel_repr import make_kernel_repr
-
-
-@gluon.jit
-def _quantize_fp8_group32_tile(X, Y, S, SIZE, tile, DEQUANT: gl.constexpr):
-    # Keep each scale in its reduction layout to avoid an LDS copy across waves.
-    layout: gl.constexpr = gl.BlockedLayout([1, 8], [8, 4], [4, 1], [1, 0])
-    groups = gl.arange(0, 32, layout=gl.SliceLayout(1, layout))
-    offsets = (
-        groups[:, None] * 32
-        + gl.arange(0, 32, layout=gl.SliceLayout(0, layout))[None, :]
-    )
-    # Buffer offsets are 32-bit; rebase each tile with 64-bit pointer arithmetic.
-    tile_base = tile.to(gl.int64) * 1024
-    scale_base = tile.to(gl.int64) * 32
-    mask = tile_base + offsets < SIZE
-    x = buffer_load(X + tile_base, offsets, mask=mask, other=0).to(gl.float32)
-    amax = gl.maximum(gl.max(gl.abs(x), 1), 1e-10)
-    bits = (amax * (1.0 / 448.0)).to(gl.uint32, bitcast=True)
-    code = (bits >> 23) + ((bits & 0x7FFFFF) != 0).to(gl.uint32)
-    scale = (code << 23).to(gl.float32, bitcast=True)
-    # These power-of-two reciprocals are exact; keep the Inf and -0 scale cases.
-    reciprocal_code = gl.maximum(254 - code.to(gl.int32), 0)
-    reciprocal_bits = gl.where(code == 256, -8388608, reciprocal_code << 23)
-    reciprocal_scale = reciprocal_bits.to(gl.float32, bitcast=True)
-    q = gl.minimum(gl.maximum(x * reciprocal_scale[:, None], -448.0), 448.0).to(
-        gl.float8e4nv
-    )
-    if DEQUANT:
-        y = (q.to(gl.float32) * scale[:, None]).to(Y.dtype.element_ty)
-        buffer_store(y, Y + tile_base, offsets, mask=mask)
-    else:
-        buffer_store(q, Y + tile_base, offsets, mask=mask)
-        buffer_store(
-            code.to(gl.uint8),
-            S + scale_base,
-            groups,
-            mask=scale_base + groups < SIZE // 32,
-        )
-
-
-@gluon.jit(
-    repr=make_kernel_repr("_quantize_fp8_group32_kernel", ["PERSISTENT", "DEQUANT"])
+# The FP8 an activation is quantized to, and the three forms every writer and
+# reader of one of those rows needs. gfx942 is FNUZ and every other target is
+# OCP E4M3; they differ in exponent bias, so a row written under one encoding
+# and read under the other is garbage. Taking all three from one declaration is
+# what keeps a clamp, a cast and a bitcast from disagreeing. The two a kernel
+# reads are `tl.constexpr`: Triton refuses a plain global inside `@triton.jit`.
+FP8_DTYPE = dtypes.fp8
+FP8_MAX = tl.constexpr(torch.finfo(FP8_DTYPE).max)
+FP8_TL_DTYPE = tl.constexpr(
+    tl.float8e4b8 if FP8_DTYPE is torch.float8_e4m3fnuz else tl.float8e4nv
 )
-def _quantize_fp8_group32_kernel(
-    X, Y, S, SIZE, DEQUANT: gl.constexpr, PERSISTENT: gl.constexpr
-):
-    task = gl.program_id(0)
-    if PERSISTENT:
-        for tile in range(task, gl.cdiv(SIZE, 1024), 256):
-            _quantize_fp8_group32_tile(X, Y, S, SIZE, tile, DEQUANT)
+# The amax floor of every FP8 activation quant: aiter's MoE input quant's, so
+# one model's quant sites all agree
+AMAX_FLOOR = tl.constexpr(1e-10)
+
+
+@triton.jit
+def ceil_pow2_code(value):
+    bits = value.to(tl.uint32, bitcast=True)
+    return (bits >> 23) + ((bits & 0x7FFFFF) != 0).to(tl.uint32)
+
+
+@triton.jit
+def quantize_fp8_kernel(X, Y, S, SIZE, DEQUANT: tl.constexpr):
+    # SIZE is the token count. A `tl.constexpr` here builds one kernel per
+    # prefill chunk length and per batch size, and it only bounds the tiles.
+    groups = tl.program_id(0) * 32 + tl.arange(0, 32)
+    offsets = groups[:, None] * 32 + tl.arange(0, 32)[None, :]
+    x = tl.load(X + offsets, offsets < SIZE, other=0).to(tl.float32)
+    amax = tl.maximum(tl.max(tl.abs(x), 1), AMAX_FLOOR)
+    code = ceil_pow2_code(amax * (1.0 / FP8_MAX))
+    scale = (code << 23).to(tl.float32, bitcast=True)
+    q = tl.minimum(tl.maximum(x / scale[:, None], -FP8_MAX), FP8_MAX).to(FP8_TL_DTYPE)
+    if DEQUANT:
+        tl.store(Y + offsets, q.to(tl.float32) * scale[:, None], offsets < SIZE)
     else:
-        _quantize_fp8_group32_tile(X, Y, S, SIZE, task, DEQUANT)
+        tl.store(Y + offsets, q, offsets < SIZE)
+        tl.store(S + groups, code.to(tl.uint8), groups < SIZE // 32)
+

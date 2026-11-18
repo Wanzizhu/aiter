@@ -116,8 +116,6 @@ def fused_dual_rmsnorm_mxfp8_quant(
     sq: torch.Tensor | None = None,
     yk: torch.Tensor | None = None,
     amax_floor: float = 0.0,
-    *,
-    persistent: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Fused dual RMSNorm in a single Triton launch.
 
@@ -137,12 +135,6 @@ def fused_dual_rmsnorm_mxfp8_quant(
         eps_k: K RMSNorm epsilon; defaults to eps_q.
         yq, sq, yk: optional pre-allocated outputs.
         amax_floor: floor of each Q group's amax (0: none).
-        persistent: use 256 workers in a one-dimensional grid with four
-            wave32 waves per worker on gfx1250.
-            Each worker processes rows at stride 256. This is a standalone
-            kernel, not a callable mono device function. This mode requires
-            BF16 inputs, contiguous weights, and non-overlapping output rows.
-            Outputs must not overlap inputs or each other.
 
     Returns:
         yq (M, KQ) fp8 e4m3fn, sq (M, KQ // 32) uint8 e8m0, yk (M, KK) bf16.
@@ -160,11 +152,6 @@ def fused_dual_rmsnorm_mxfp8_quant(
     if eps_k is None:
         eps_k = eps_q
 
-    if persistent:
-        from aiter.ops.triton.quant.mono_utils import validate_dual_norm
-
-        validate_dual_norm(q, k, q_weight, k_weight, yq, sq, yk)
-
     Ns = KQ // _QUANT_BLOCK_SIZE
     BLOCK_SIZE_KQ = triton.next_power_of_2(KQ)
     BLOCK_SIZE_KK = triton.next_power_of_2(KK)
@@ -176,7 +163,7 @@ def fused_dual_rmsnorm_mxfp8_quant(
     if yk is None:
         yk = torch.empty((M, KK), dtype=k.dtype, device=k.device)
 
-    NUM_PRGMS = 256 if persistent else M
+    NUM_PRGMS = M
     grid = (NUM_PRGMS,)
 
     _fused_dual_rmsnorm_mxfp8_quant_kernel[grid](
@@ -207,7 +194,6 @@ def fused_dual_rmsnorm_mxfp8_quant(
         QUANT_BLOCK_SIZE=_QUANT_BLOCK_SIZE,
         NUM_PRGMS=NUM_PRGMS,
         AMAX_FLOOR=amax_floor,
-        num_warps=4,
     )
     return yq, sq, yk
 
