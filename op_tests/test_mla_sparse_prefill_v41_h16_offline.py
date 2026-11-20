@@ -428,17 +428,35 @@ class AbiTests(unittest.TestCase):
         )
         self.assertIn(".amdhsa_group_segment_fixed_size 327680", self.asm)
         self.assertIn(".amdhsa_kernarg_size 128", self.asm)
-        self.assertIn("SP3_MD5(excl_stamp)=a679bc89bee9ce5bc31b82a0c5831098", self.asm)
+        self.assertIn("SP3_MD5(excl_stamp)=ae67f526c44a8e5978d2f081793edf9a", self.asm)
         self.assertEqual(hashlib.sha256(ASM.read_bytes()).hexdigest(),
-                         "68e9453672de984e6de9b9a16e217867edcd723f0d623297d8496f205a8604d4")
+                         "c906c22d9b7ba4fd4e6ac25221b759d04aff21560422d39a6d9547a9e0f23765")
 
     def test_code_object_identity(self):
         code_object = ASM.with_suffix(".co")
         self.assertEqual(code_object.stat().st_size, 50680)
         self.assertEqual(
             hashlib.sha256(code_object.read_bytes()).hexdigest(),
-            "eb1a574bcab24da7f38cb10268779246387fb70610b74bf6f9e46fd00177bb78",
+            "eea4c102dc9fedf3ea5db98f6f3d73508a58622a711cd21e7b0668a0662938cd",
         )
+
+    def test_code_object_contains_the_complete_v3_payload(self):
+        data = ASM.with_suffix(".co").read_bytes()
+        self.assertEqual(data[:6], b"\x7fELF\x02\x01")
+        offset = struct.unpack_from("<Q", data, 40)[0]
+        size, count, names_index = struct.unpack_from("<HHH", data, 58)
+        sections = [struct.unpack_from("<IIQQQQIIQQ", data, offset + n * size)
+                    for n in range(count)]
+        names = sections[names_index]
+        strings = data[names[4]:names[4] + names[5]]
+        text = next(s for s in sections if strings[s[0]:].split(b"\0", 1)[0] == b".text")
+        words = re.findall(r"^\s*\.long (0x[0-9a-f]+)\s*$",
+                           self.asm.split(".section  .rodata", 1)[0], re.M)
+        payload = b"".join(struct.pack("<I", int(w, 16)) for w in words)
+        self.assertEqual(len(payload), 32768)
+        self.assertEqual(data[text[4]:text[4] + text[5]], payload)
+        self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                         "2cc43b22bcea9b42695c08cfa8a3312aedd74fa28899252ddf73fd0ec8f1a639")
 
 
 if __name__ == "__main__":

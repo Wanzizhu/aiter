@@ -62,7 +62,11 @@ are unchanged.
   327680-byte static LDS; private segment 0, wave32, metadata SGPR/VGPR
   counts 106/1024. Metadata `max_flat_workgroup_size=1024` is an upper bound,
   not the launch block size.
-- CO SHA256: `eb1a574bcab24da7f38cb10268779246387fb70610b74bf6f9e46fd00177bb78`.
+- CO SHA256: `eea4c102dc9fedf3ea5db98f6f3d73508a58622a711cd21e7b0668a0662938cd`.
+
+当前 H16 为 v3：SMEM load 和 `s_prefetch_data` 使用默认 WGP scope，
+Q/KV data、scale 与 sink load 保留 DEV，O store 保留 DEV+HT。其余指令、TH、ABI、
+grid、descriptor、metadata 和 padding 不变；H64 的代码及策略不变。
 
 ## H16 ABI
 
@@ -85,24 +89,34 @@ first. **The host must not swap either data/scales or CSR pointers.**
 | 104 / 112 | partial_r / partial_lse | null / null |
 | 120 / 124 | query_count u32 / persistent_groups u32 | `N` / `256` |
 
-## H16 Provenance And Build
+## H16 V3 来源与构建
 
-Supplied by Chen Ting on 2026-11-20: `source 1.sp3` at 05:07 UTC and its
-sp3cvt-generated `.s` at 05:10 UTC. Source package:
-`poc_kl_merg/scripts/mi400/mono/7j_ds41_mono_sync/kernels/A06_ps/`.
-The `.s` beside the code object is copied byte-for-byte from that package.
+v3 基于 Chen Ting 于 2026-11-20 提供的 `source 1.sp3`（05:07 UTC）及对应
+sp3cvt `.s`（05:10 UTC）。来源目录为
+`poc_kl_merg/scripts/mi400/mono/7j_ds41_mono_sync/kernels/A06_ps/`，
+本目录 `.s` 与该目录逐字节相同。用户从 16 行 SMEM/data-prefetch 源指令移除 DEV，
+以 `/tmp/sp3neo --emit bin --sp3-option allow_raw_bits=1` 重编译 code words；
+保留 v2 的其余指令与描述符，仅更新源文件时间戳、校验注释及 `.sp3.notes`。
 
-- Assembly SHA256: `68e9453672de984e6de9b9a16e217867edcd723f0d623297d8496f205a8604d4`.
-- SP3 SHA256: `17fe3822d19b5ddfce79e50384049ace37136c1ac6a4f22d02ded1bd985652fe`.
-- SP3 MD5 excluding its first stamp line:
-  `a679bc89bee9ce5bc31b82a0c5831098`, also embedded in `.sp3.notes`.
-- Query-loop evidence in `source.sp3`: `get_dispatch_index` (line 834),
-  `load_kernel_args` (2323), 64-bit indptr offsets (2337),
-  `loop_setup_ps` (5526), entry/handoff/empty paths (5680..5757).
-  The authoritative package README and `doc/UPGRADE_FP4.md` sections 1.2/6
-  establish the source layouts and CSA-prefix/SWA-extend ABI.
+| 身份 | SHA256 |
+|---|---|
+| `.s` | `c906c22d9b7ba4fd4e6ac25221b759d04aff21560422d39a6d9547a9e0f23765` |
+| `source.sp3` | `83ece166ecbfd43835eba074ac23264fe3f9a1322f973e518a52a3fa8489e69d` |
+| 完整 32768 B `.text` | `2cc43b22bcea9b42695c08cfa8a3312aedd74fa28899252ddf73fd0ec8f1a639` |
 
-Rebuild from this repository root with the integration toolchain:
+v3 MD5=`ae67f526c44a8e5978d2f081793edf9a`，按 SP3 第 2 行至 EOF 的原始字节计算，
+也写入 `.sp3.notes`。Ting v2 的 `a679bc89…` 来自其工具，不能直接按本次口径比较。
+用户已核验重编译 v2 重现 7933 个 code words；完整 v2/v3 payload 比较恰好
+45 个 word 不同，均为高字节 `0xF4` 的 SMEM 编码，逐个 XOR=`0x00400000`。
+这 45 条读取 kernarg、LTD indices、indptr、`csa_last`，均在 launch 前准备且期间不变。
+其他 41 条 load 和两条 O store 仍为 DEV/DEV+HT；7j 的 raw audit 对此逐指令 check-only。
+
+Query loop 的 SP3 定位：`get_dispatch_index`（834）、`load_kernel_args`（2323）、
+64-bit indptr offsets（2337）、`loop_setup_ps`（5526）、entry/handoff/empty（5680–5757）。
+来源 README 和 `doc/UPGRADE_FP4.md` §1.2/§6 规定 source planes 及
+CSA-prefix/SWA-extend ABI；本次不改这些接口。
+
+从仓库根目录使用集成工具链重建：
 
 ```bash
 LLVM=/home/weizhu15/tmp/llvm23_dl/LLVM-23.1.5-Linux-X64/bin
@@ -114,10 +128,17 @@ K=hsa/gfx1250/mla_v41/mla_v41_qh16_ps_grid256x_mono_v1
 sha256sum "$K.s" "$K.co"
 ```
 
-Offline assembly/link and metadata checks passed with LLVM 23.1.5.
-Disassembly confirms entry `ttmp9 -> s38`, count/group load at kernarg
-offset 120, `s92 = s38 + s91`, and the single decoded `s_endpgm` at kernel
-offset `0x3f48`. LLVM leaves 56 words as `.long`, including TDM encodings;
-this is not a complete instruction-decoding audit. Host contract tests pass;
-the HIP launcher build, GPU correctness (including N>256), and performance
-remain unverified. See `docs/mla_v41_h16_handoff.md` for acceptance commands.
+LLVM 23.1.5 的离线汇编/链接及 metadata 检查通过。反汇编可核对入口
+`ttmp9 -> s38`、kernarg offset120 的 count/group load、`s92 = s38 + s91`，
+以及唯一 `s_endpgm` 位于 `+0x3f48`。LLVM 仍将包括 TDM 在内的 56 个 word 显示为
+`.long`，不能把此反汇编称为完整解码审计；7j 使用固定 TDM 编码白名单补齐审计。
+H16 离线测试检查新 `.s/.co` SHA、MD5 stamp、完整 `.text` 字节、host contract 和 ABI：
+
+```bash
+python3 -m unittest op_tests.test_mla_sparse_prefill_v41_h16_offline -v
+```
+
+HIP launcher 编译、GPU 正确性（含 N>256）和性能仍未验证，命令见
+`docs/mla_v41_h16_handoff.md`。7j mono 的 WGP-store 正确性还需 early-write-ACK
+平台/驱动配置证据、实际 SMEM audit 和变输入/变 CSR/SWA replay；dispatch acquire
+建立入口无旧副本是**推断**，未有这些证据时不声明正确性或进行计时，不写硬件寄存器。

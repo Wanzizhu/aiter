@@ -11,7 +11,7 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xb0804009
     .long 0x8b01ff01
     .long 0x01ffffff
-    .long 0xf4403680
+    .long 0xf4003680
     .long 0xf8000078
     .long 0xbed00081
     .long 0xbed20080
@@ -68,11 +68,11 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x85299e26
     .long 0x80202812
     .long 0x82212913
-    .long 0xf4403890
+    .long 0xf4003890
     .long 0xf8000000
     .long 0x80222816
     .long 0x82232917
-    .long 0xf4402591
+    .long 0xf4002591
     .long 0xf8000000
     .long 0xbf860000
     .long 0x7ee00280
@@ -456,7 +456,7 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x01ffffff
     .long 0x89a8a029
     .long 0x812ac128
-    .long 0xf444c011
+    .long 0xf404c011
     .long 0x54000000
     .long 0x80a92829
     .long 0xbf068029
@@ -486,7 +486,7 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x01ffffff
     .long 0x89a8a029
     .long 0x812ac128
-    .long 0xf444c011
+    .long 0xf404c011
     .long 0x54000000
     .long 0x80a92829
     .long 0xbf068029
@@ -880,7 +880,7 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x00004000
     .long 0x80a88163
     .long 0x84288228
-    .long 0xf44219a0
+    .long 0xf40219a0
     .long 0x50000000
     .long 0xbea00018
     .long 0x8b28ff19
@@ -899,7 +899,7 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x808e280e
     .long 0x80a8810f
     .long 0x84288228
-    .long 0xf44203d0
+    .long 0xf40203d0
     .long 0x50000000
     .long 0xbed20065
     .long 0xbf068065
@@ -1026,9 +1026,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa2147b
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -1123,9 +1123,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa21458
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -1220,9 +1220,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa21435
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -1317,9 +1317,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa21412
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -1478,9 +1478,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa213af
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -1575,9 +1575,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa2138c
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0xbf8600a2
     .long 0xcc350000
@@ -2205,9 +2205,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xdbf06380
     .long 0x7c0000e8
     .long 0xbfa2158b
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0xbf065916
     .long 0xbfc6001c
@@ -2851,9 +2851,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x700000e8
     .long 0xdbf06380
     .long 0x7c0000e8
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0xbfc6001c
     .long 0xbe804ec1
@@ -3638,13 +3638,13 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbf86c300
     .long 0xbf095a5c
     .long 0xbfa20055
-    .long 0xf4402080
+    .long 0xf4002080
     .long 0xf8000000
-    .long 0xf4408100
+    .long 0xf4008100
     .long 0xf8000008
-    .long 0xf4404500
+    .long 0xf4004500
     .long 0xf8000048
-    .long 0xf4402600
+    .long 0xf4002600
     .long 0xf8000058
     .long 0xbf068027
     .long 0xbfa10000
@@ -4064,9 +4064,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa20a11
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -4161,9 +4161,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa209ee
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -4258,9 +4258,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa209cb
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -4355,9 +4355,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa209a8
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -4505,9 +4505,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa20950
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0x8b1f8317
     .long 0x961fff1f
@@ -4602,9 +4602,9 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbfa2092d
     .long 0x96285317
     .long 0x80286728
-    .long 0xf4426c20
+    .long 0xf4026c20
     .long 0x50000000
-    .long 0xf4426e20
+    .long 0xf4026e20
     .long 0x50000020
     .long 0xbf8600a2
     .long 0xcc3a0000
@@ -5628,11 +5628,11 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0x85299e26
     .long 0x80202812
     .long 0x82212913
-    .long 0xf4403890
+    .long 0xf4003890
     .long 0xf8000000
     .long 0x80222816
     .long 0x82232917
-    .long 0xf4402591
+    .long 0xf4002591
     .long 0xf8000000
     .long 0xbf860000
     .long 0x7ee00280
@@ -5758,13 +5758,13 @@ mla_v41_qh16_ps_grid256x_mono_v1:
     .long 0xbf94ffff
     .long 0xbf095a5c
     .long 0xbfa20055
-    .long 0xf4402080
+    .long 0xf4002080
     .long 0xf8000000
-    .long 0xf4408100
+    .long 0xf4008100
     .long 0xf8000008
-    .long 0xf4404500
+    .long 0xf4004500
     .long 0xf8000048
-    .long 0xf4402600
+    .long 0xf4002600
     .long 0xf8000058
     .long 0xbf068027
     .long 0xbfa10000
@@ -8287,5 +8287,5 @@ amdhsa.version: [ 1, 2 ]
 .end_amdgpu_metadata
 
 .pushsection .sp3.notes,"",@progbits
-.asciz "SP3_MD5(excl_stamp)=a679bc89bee9ce5bc31b82a0c5831098"
+.asciz "SP3_MD5(excl_stamp)=ae67f526c44a8e5978d2f081793edf9a"
 .popsection
