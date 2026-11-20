@@ -196,3 +196,157 @@ AITER_CTYPES_DEFINE_ENTRYPOINT_VOID(asm_mla_sparse_prefill_v41_fwd,
     // Query is grid.y even for S1. S>1 merges within one cluster and one launch.
     kernel.launch_kernel({&args, &arg_size, s, static_cast<int>(n), 1, 128, 1, 1, stream, s, 1, 1});
 }
+
+namespace {
+
+struct __attribute__((packed)) MlaV41H16Args
+{
+    const void* q;
+    const void* q_scale;
+    const void* unified_kv;
+    const void* unified_kv_scale;
+    const void* kv;
+    const void* kv_scale;
+    const void* attn_sink;
+    void* out;
+    const void* kv_indptr_prefix;
+    const void* kv_indices_prefix;
+    const void* kv_indptr_extend;
+    const void* kv_indices_extend;
+    float softmax_scale;
+    uint32_t passes;
+    void* partial_r;
+    void* partial_lse;
+    uint32_t query_count;
+    uint32_t persistent_groups;
+};
+
+static_assert(sizeof(MlaV41H16Args) == 128, "H16 kernarg size drift");
+#define CHECK_H16_OFFSET(field, offset) \
+    static_assert(offsetof(MlaV41H16Args, field) == offset, "H16 kernarg offset drift")
+CHECK_H16_OFFSET(q, 0);
+CHECK_H16_OFFSET(q_scale, 8);
+CHECK_H16_OFFSET(unified_kv, 16);
+CHECK_H16_OFFSET(unified_kv_scale, 24);
+CHECK_H16_OFFSET(kv, 32);
+CHECK_H16_OFFSET(kv_scale, 40);
+CHECK_H16_OFFSET(attn_sink, 48);
+CHECK_H16_OFFSET(out, 56);
+CHECK_H16_OFFSET(kv_indptr_prefix, 64);
+CHECK_H16_OFFSET(kv_indices_prefix, 72);
+CHECK_H16_OFFSET(kv_indptr_extend, 80);
+CHECK_H16_OFFSET(kv_indices_extend, 88);
+CHECK_H16_OFFSET(softmax_scale, 96);
+CHECK_H16_OFFSET(passes, 100);
+CHECK_H16_OFFSET(partial_r, 104);
+CHECK_H16_OFFSET(partial_lse, 112);
+CHECK_H16_OFFSET(query_count, 120);
+CHECK_H16_OFFSET(persistent_groups, 124);
+#undef CHECK_H16_OFFSET
+
+void check_h16_alignment(const aiter_tensor_t* tensor, const char* name, uintptr_t alignment)
+{
+    AITER_CHECK(tensor->numel() == 0 ||
+                    reinterpret_cast<uintptr_t>(tensor->data_ptr()) % alignment == 0,
+                name,
+                " has unsupported alignment");
+}
+
+} // namespace
+
+AITER_CTYPES_DEFINE_ENTRYPOINT_VOID(asm_mla_sparse_prefill_v41_h16_fwd,
+                                    (aiter_tensor_t* q,
+                                     aiter_tensor_t* q_scale,
+                                     aiter_tensor_t* unified_kv,
+                                     aiter_tensor_t* unified_kv_scale,
+                                     aiter_tensor_t* kv_indices_prefix,
+                                     aiter_tensor_t* kv_indptr_prefix,
+                                     aiter_tensor_t* kv,
+                                     aiter_tensor_t* kv_scale,
+                                     aiter_tensor_t* kv_indices_extend,
+                                     aiter_tensor_t* kv_indptr_extend,
+                                     aiter_tensor_t* attn_sink,
+                                     aiter_tensor_t* out,
+                                     float softmax_scale,
+                                     hipStream_t stream),
+                                    (q,
+                                     q_scale,
+                                     unified_kv,
+                                     unified_kv_scale,
+                                     kv_indices_prefix,
+                                     kv_indptr_prefix,
+                                     kv,
+                                     kv_scale,
+                                     kv_indices_extend,
+                                     kv_indptr_extend,
+                                     attn_sink,
+                                     out,
+                                     softmax_scale,
+                                     stream))
+{
+    AITER_CHECK(q != nullptr && q->is_gpu(), "q must be a HIP tensor");
+    HipDeviceGuard guard(q->device_id);
+    AITER_CHECK(get_gpu_arch() == "gfx1250", "V4.1 H16 asm requires gfx1250");
+    const int device = q->device_id;
+    check_tensor(q, "q", device, {AITER_DTYPE_fp8});
+    AITER_CHECK(q->dim() == 3, "q must have shape [N,16,512]");
+    const int64_t n = q->size(0);
+    AITER_CHECK(n >= 0 && n <= 0x7fffffffLL, "H16 N must be in [0,2147483647]");
+    AITER_CHECK(softmax_scale == static_cast<float>(1.0 / std::sqrt(512.0)),
+                "V4.1 H16 asm requires softmax_scale=1/sqrt(512)");
+    check_shape(q, "q", {n, 16, 512});
+    check_tensor(q_scale, "q_scale", device, {AITER_DTYPE_u8, AITER_DTYPE_fp8_e8m0});
+    check_shape(q_scale, "q_scale", {n, 16, 16});
+    check_tensor(unified_kv, "unified_kv", device, {AITER_DTYPE_u8, AITER_DTYPE_fp4x2});
+    AITER_CHECK(unified_kv->dim() == 2, "unified_kv must have shape [Pc,256]");
+    check_shape(unified_kv, "unified_kv", {unified_kv->size(0), 256});
+    check_tensor(unified_kv_scale, "unified_kv_scale", device, {AITER_DTYPE_u8, AITER_DTYPE_fp8});
+    check_shape(unified_kv_scale, "unified_kv_scale", {unified_kv->size(0), 32});
+    check_tensor(kv, "kv", device, {AITER_DTYPE_fp8});
+    AITER_CHECK(kv->dim() == 2, "kv must have shape [Ps,512]");
+    check_shape(kv, "kv", {kv->size(0), 512});
+    check_tensor(kv_scale, "kv_scale", device, {AITER_DTYPE_u8, AITER_DTYPE_fp8_e8m0});
+    check_shape(kv_scale, "kv_scale", {kv->size(0), 16});
+    check_csr(kv_indices_prefix, kv_indptr_prefix, n, device);
+    check_csr(kv_indices_extend, kv_indptr_extend, n, device);
+    AITER_CHECK(kv_indices_prefix->numel() <= 0x1fffffffULL &&
+                    kv_indices_extend->numel() <= 0x1fffffffULL,
+                "H16 CSR arrays exceed the conservative 2**29-1 entry limit");
+    check_tensor(out, "out", device, {AITER_DTYPE_bf16});
+    check_shape(out, "out", {n, 16, 512});
+    for(const auto* tensor : {q, unified_kv, kv, out})
+        check_h16_alignment(tensor, "H16 data/output", 16);
+    for(const auto* tensor : {q_scale, unified_kv_scale, kv_scale,
+                             kv_indices_prefix, kv_indptr_prefix,
+                             kv_indices_extend, kv_indptr_extend})
+        check_h16_alignment(tensor, "H16 scale/CSR", 4);
+    check_tensor(attn_sink, "attn_sink", device, {AITER_DTYPE_fp32});
+    check_shape(attn_sink, "attn_sink", {16});
+    if(n == 0)
+        return;
+
+    // The kernel swaps all four source/CSR pointer pairs internally for SWA-first.
+    MlaV41H16Args args{q->data_ptr(),
+                       q_scale->data_ptr(),
+                       unified_kv->data_ptr(),
+                       unified_kv_scale->data_ptr(),
+                       kv->data_ptr(),
+                       kv_scale->data_ptr(),
+                       attn_sink->data_ptr(),
+                       out->data_ptr(),
+                       kv_indptr_prefix->data_ptr(),
+                       kv_indices_prefix->data_ptr(),
+                       kv_indptr_extend->data_ptr(),
+                       kv_indices_extend->data_ptr(),
+                       softmax_scale,
+                       1,
+                       nullptr,
+                       nullptr,
+                       static_cast<uint32_t>(n),
+                       256};
+    size_t arg_size = sizeof(args);
+    static AiterAsmKernel kernel("mla_v41_qh16_ps_grid256x_mono_v1",
+                                 "mla_v41/mla_v41_qh16_ps_grid256x_mono_v1.co");
+    // Default cluster dimensions are 1x1x1; no dynamic LDS or split workspace.
+    kernel.launch_kernel({&args, &arg_size, 256, 1, 1, 128, 1, 1, stream});
+}

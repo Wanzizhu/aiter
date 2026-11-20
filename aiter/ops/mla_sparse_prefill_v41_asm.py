@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""gfx1250 H64 mixed FP8/NVFP4 sparse MLA with fused split-K reduction."""
+"""gfx1250 FP8/NVFP4 sparse MLA: H64 fused split-K and H16 persistent S1."""
 
 import math
 import struct
@@ -216,5 +216,157 @@ def _asm_sparse_prefill_v41(
             splits,
             partial_r,
             partial_lse,
+        )
+    return out
+
+
+@compile_ops("module_mla_sparse_prefill_v41_asm", ffi_type="ctypes")
+def asm_mla_sparse_prefill_v41_h16_fwd(
+    q: torch.Tensor,
+    q_scale: torch.Tensor,
+    unified_kv: torch.Tensor,
+    unified_kv_scale: torch.Tensor,
+    kv_indices_prefix: torch.Tensor,
+    kv_indptr_prefix: torch.Tensor,
+    kv: torch.Tensor,
+    kv_scale: torch.Tensor,
+    kv_indices_extend: torch.Tensor,
+    kv_indptr_extend: torch.Tensor,
+    attn_sink: torch.Tensor,
+    out: torch.Tensor,
+    softmax_scale: float,
+) -> None:
+    """H16 S1 ctypes entry, with no split or workspace arguments."""
+
+
+def _check_v41_h16_splits(num_kv_splits):
+    if num_kv_splits is not None and (
+        type(num_kv_splits) is not int or num_kv_splits != 1
+    ):
+        raise ValueError(
+            "mla_sparse_prefill_v41 H16 asm supports S1 only: "
+            f"num_kv_splits must be None or integer 1, got {num_kv_splits!r}"
+        )
+
+
+def _asm_sparse_prefill_v41_h16(
+    q,
+    q_scale,
+    unified_kv,
+    unified_kv_scale,
+    kv_indices_prefix,
+    kv_indptr_prefix,
+    kv,
+    kv_scale,
+    kv_indices_extend,
+    kv_indptr_extend,
+    attn_sink,
+    softmax_scale,
+    out,
+    num_kv_splits=None,
+):
+    """Run Chen Ting's H16 PS kernel with CSA-prefix/SWA-extend pointers."""
+    _check_v41_h16_splits(num_kv_splits)
+    if not isinstance(q, torch.Tensor) or q.dim() != 3:
+        raise ValueError("mla_sparse_prefill_v41 H16 asm: q must have shape [N,16,512]")
+    if q.device.type != "cuda" or torch.version.hip is None:
+        raise ValueError("mla_sparse_prefill_v41 H16 asm: q must be a HIP device tensor")
+    n = q.size(0)
+    # s_seq advances by 256 in u32; this API bound also prevents loop wraparound.
+    if not 0 <= n <= 2**31 - 1:
+        raise ValueError("mla_sparse_prefill_v41 H16 asm: N must be in [0,2147483647]")
+    device = q.device
+    fp8 = (torch.float8_e4m3fn,)
+    e8m0 = (torch.uint8, dtypes.fp8_e8m0)
+    specs = (
+        ("q", q, (n, 16, 512), fp8),
+        ("q_scale", q_scale, (n, 16, 16), e8m0),
+        ("unified_kv", unified_kv, (None, 256), (torch.uint8, dtypes.fp4x2)),
+        ("unified_kv_scale", unified_kv_scale, (None, 32), (torch.uint8, *fp8)),
+        ("kv", kv, (None, 512), fp8),
+        ("kv_scale", kv_scale, (None, 16), e8m0),
+        ("kv_indices_prefix", kv_indices_prefix, (None,), (torch.int32,)),
+        ("kv_indptr_prefix", kv_indptr_prefix, (n + 1,), (torch.int32,)),
+        ("kv_indices_extend", kv_indices_extend, (None,), (torch.int32,)),
+        ("kv_indptr_extend", kv_indptr_extend, (n + 1,), (torch.int32,)),
+    )
+    for name, value, shape, allowed_dtypes in specs:
+        _check_tensor(name, value, shape, allowed_dtypes, device)
+        alignment = 16 if name in ("q", "unified_kv", "kv") else 4
+        if value.numel() and value.data_ptr() % alignment:
+            raise ValueError(
+                f"mla_sparse_prefill_v41 H16 asm: {name} must be {alignment}-byte aligned"
+            )
+    if unified_kv.size(0) != unified_kv_scale.size(0):
+        raise ValueError("mla_sparse_prefill_v41 H16 asm: CSA data/scale row counts differ")
+    if kv.size(0) != kv_scale.size(0):
+        raise ValueError("mla_sparse_prefill_v41 H16 asm: SWA data/scale row counts differ")
+    for name, indices in (
+        ("kv_indices_prefix", kv_indices_prefix),
+        ("kv_indices_extend", kv_indices_extend),
+    ):
+        # Scalar-buffer LTD offsets are u32 bytes, including speculative lookahead.
+        if indices.numel() > 2**29 - 1:
+            raise ValueError(
+                f"mla_sparse_prefill_v41 H16 asm: {name} exceeds the conservative "
+                "2**29-1 entry limit for 32-bit CSR byte offsets"
+            )
+    if attn_sink is not None:
+        _check_tensor("attn_sink", attn_sink, (16,), (torch.float32,), device)
+    if out is None:
+        out = torch.empty((n, 16, 512), dtype=torch.bfloat16, device=device)
+    else:
+        _check_tensor("out", out, (n, 16, 512), (torch.bfloat16,), device)
+    if out.numel():
+        if out.data_ptr() % 16:
+            raise ValueError("mla_sparse_prefill_v41 H16 asm: out must be 16-byte aligned")
+        out_start = out.data_ptr()
+        out_end = out_start + out.numel() * out.element_size()
+        inputs = [(name, value) for name, value, _, _ in specs]
+        if attn_sink is not None:
+            inputs.append(("attn_sink", attn_sink))
+        for name, value in inputs:
+            if value.numel():
+                start = value.data_ptr()
+                end = start + value.numel() * value.element_size()
+                if out_start < end and start < out_end:
+                    raise ValueError(
+                        f"mla_sparse_prefill_v41 H16 asm: out must not overlap {name}"
+                    )
+    scale = float(softmax_scale)
+    try:
+        supported_scale = struct.pack("<f", scale) == struct.pack(
+            "<f", 1 / math.sqrt(512)
+        )
+    except (OverflowError, struct.error):
+        supported_scale = False
+    if not supported_scale:
+        raise ValueError(
+            "mla_sparse_prefill_v41 H16 asm only supports softmax_scale=1/sqrt(512) "
+            "with the same FP32 representation"
+        )
+    if n == 0:
+        return out
+    with torch.cuda.device(device):
+        gfx = get_gfx_runtime()
+        if gfx != "gfx1250":
+            raise RuntimeError(f"mla_sparse_prefill_v41 H16 asm requires gfx1250, got {gfx}")
+        require_gfx1250_asm("mla_sparse_prefill_v41 H16")
+        if attn_sink is None:
+            attn_sink = torch.full((16,), -math.inf, dtype=torch.float32, device=device)
+        asm_mla_sparse_prefill_v41_h16_fwd(
+            q,
+            q_scale,
+            unified_kv,
+            unified_kv_scale,
+            kv_indices_prefix,
+            kv_indptr_prefix,
+            kv,
+            kv_scale,
+            kv_indices_extend,
+            kv_indptr_extend,
+            attn_sink,
+            out,
+            scale,
         )
     return out

@@ -14,7 +14,7 @@ layout is a new dtype case, not a new entry.
   RoPE (NoPE fp8): asm on gfx1250 with H == 128 (opus if it declines), else opus.
 * :func:`mla_sparse_prefill_v41` -- v4.1: rows with separate ``[*, 16]`` E8M0 scales
   (q, kv fp8), the prefix source fp8 or NVFP4 with ``[*, 32]`` e4m3 scales: opus on gfx950,
-  and with an fp8 prefix on gfx1250; asm for H64 NVFP4 on gfx1250.
+  and with an fp8 prefix on gfx1250; asm for H16/H64 NVFP4 on gfx1250.
 
 ``backend`` forces one backend. A configuration no backend serves raises RuntimeError;
 a bad argument raises ValueError.
@@ -37,6 +37,10 @@ from ..jit.utils.torch_guard import torch_compile_guard
 from ..plugin import route as _route
 from ..utility import dtypes
 from .mla_sparse_prefill_v41_asm import _asm_sparse_prefill_v41
+from .mla_sparse_prefill_v41_asm import (
+    _asm_sparse_prefill_v41_h16,
+    _check_v41_h16_splits,
+)
 from .opus.mla import (
     opus_mla_v4_prefill_a8w8_gfx950_fwd,
     opus_mla_v4_prefill_a8w8_gfx1250_fwd,
@@ -532,7 +536,7 @@ def _v41_runtime_arch(device: torch.device | str) -> str | None:
     return gfx if gfx == get_gfx_runtime() else None
 
 
-def _v41_asm_eligible(gfx, shape, dtypes_, layout, scale):
+def _v41_asm_eligible(gfx, shape, dtypes_, layout, scale, num_kv_splits=None):
     n, h, d = shape
     (
         q_dtype,
@@ -542,6 +546,24 @@ def _v41_asm_eligible(gfx, shape, dtypes_, layout, scale):
         kv_dtype,
         kv_scale_dtype,
     ) = dtypes_
+    if h == 16:
+        return (
+            gfx == "gfx1250"
+            and d == 512
+            and 0 <= n <= 2**31 - 1
+            and layout == "contiguous"
+            and q_dtype == kv_dtype == dtypes.fp8
+            and q_scale_dtype in _E8M0
+            and kv_scale_dtype in _E8M0
+            and prefix_dtype in (torch.uint8, dtypes.fp4x2)
+            and prefix_scale_dtype in (torch.uint8, dtypes.fp8)
+            and (
+                num_kv_splits is None
+                or (type(num_kv_splits) is int and num_kv_splits == 1)
+            )
+            and struct.pack("<f", scale) == struct.pack("<f", 1 / math.sqrt(512))
+            and is_gfx1250_asm_supported()
+        )
     return (
         gfx == "gfx1250"
         and h == 64
@@ -594,6 +616,7 @@ def get_mla_sparse_prefill_v41_backend(
     kv_dtype: torch.dtype = dtypes.fp8,
     kv_scale_dtype: torch.dtype = torch.uint8,
     layout: str = "contiguous",
+    num_kv_splits: int | None = None,
 ) -> str | None:
     """Query the native v4.1 backend before preparing/quantizing Q.
 
@@ -609,6 +632,8 @@ def get_mla_sparse_prefill_v41_backend(
     Actual tensor shapes, addresses, CSR, output and split workspaces remain
     subject to execution-time validation; this query does not catch launch
     errors or test whether a toolchain can successfully compile a kernel.
+    H16 ASM is S1-only: ``num_kv_splits`` must be None or integer 1 for
+    eligibility. H64/OPUS retain their execution-time split validation.
 
     The target must be a live HIP device matching native dispatch's runtime
     architecture. ASM also observes the existing B0+ runtime gate. Malformed
@@ -647,7 +672,7 @@ def get_mla_sparse_prefill_v41_backend(
     if max(n, h) > 2**31 - 1 or d != 512:
         return None
     gfx = _v41_runtime_arch(device)
-    if _v41_asm_eligible(gfx, q_shape, dtype_spec, layout, scale):
+    if _v41_asm_eligible(gfx, q_shape, dtype_spec, layout, scale, num_kv_splits):
         return "asm"
     if _v41_opus_eligible(gfx, q_shape, dtype_spec, layout):
         return "opus"
@@ -1109,7 +1134,7 @@ def mla_sparse_prefill_v41(
     or fp8_e8m0, one per 32 values). Same argument order as
     :func:`mla_sparse_prefill_v4`, with the RoPE tensors replaced by the scales.
     Supported (q, unified_kv, kv) dtypes: (fp8, fp8, fp8) on gfx950 and gfx1250, and
-    (fp8, fp4x2, fp8) on gfx950 (opus) and gfx1250 H64 (asm), with an NVFP4
+    (fp8, fp4x2, fp8) on gfx950 (opus) and gfx1250 H16/H64 (asm), with an NVFP4
     prefix source: e2m1 pairs (fp4x2 or uint8, the even value in the low nibble)
     with an e4m3 scale (fp8 or uint8) per 16 values. The asm backend requires
     contiguous, separate data and scale arrays; it does not unpack interleaved
@@ -1144,8 +1169,11 @@ def mla_sparse_prefill_v41(
         and 2 otherwise. Other prefix lengths use the ASM fallback heuristic.
         Extend rows do not count toward the prefix average. asm fuses reduction
         in the same launch and allocates workspace internally.
+        H16 asm instead accepts only None or 1 (S1), uses a persistent grid
+        of 256 workgroups and allocates no split workspace. H16 supports
+        0 <= N <= 2**31-1; each CSR index array is limited to 2**29-1 entries.
       backend:           ``"asm"``, ``"opus"`` or ``None``. Default selects asm
-        for a supported gfx1250 H64 NVFP4 prefix, otherwise opus. Use
+        for a supported gfx1250 H16/H64 NVFP4 prefix, otherwise opus. Use
         :func:`get_mla_sparse_prefill_v41_backend` before quantizing Q to check
         native eligibility. Explicit backends retain their validation/errors.
         Enabled plugins are tried first and do not receive this native pin.
@@ -1158,6 +1186,13 @@ def mla_sparse_prefill_v41(
     def native_fallback(*native_args, **native_kwargs):
         selected = backend
         if selected is None:
+            if (
+                q.dim() == 3
+                and q.size(1) == 16
+                and unified_kv.dtype in (torch.uint8, dtypes.fp4x2)
+                and _v41_runtime_arch(q.device) == "gfx1250"
+            ):
+                _check_v41_h16_splits(num_kv_splits)
             selected = get_mla_sparse_prefill_v41_backend(
                 q.device,
                 tuple(q.shape),
@@ -1171,6 +1206,7 @@ def mla_sparse_prefill_v41(
                 layout=_v41_tensor_layout(
                     q, q_scale, unified_kv, unified_kv_scale, kv, kv_scale
                 ),
+                num_kv_splits=num_kv_splits,
             )
             if selected is None:
                 raise RuntimeError(
@@ -1180,6 +1216,8 @@ def mla_sparse_prefill_v41(
         implementation = (
             _asm_sparse_prefill_v41 if selected == "asm" else _opus_sparse_prefill_v41
         )
+        if selected == "asm" and q.dim() == 3 and q.size(1) == 16:
+            implementation = _asm_sparse_prefill_v41_h16
         return implementation(*native_args, **native_kwargs)
 
     args = (
