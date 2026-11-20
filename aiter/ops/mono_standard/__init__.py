@@ -3,7 +3,8 @@
 
 """Explicit gfx1250 MONO operators, built lazily on first invocation.
 
-The standalone entry points use grid (16, 16, 1), block (128, 1, 1).
+The standalone entry points use grid (256, 1, 1), block (128, 1, 1).
+The linear worker id comes only from the X workgroup id.
 See docs/mono-rope.md for the supported shapes and device-call ABI.
 """
 

@@ -94,7 +94,6 @@ def _quantize_fp8_group32_kernel(
 ):
     task = gl.program_id(0)
     if PERSISTENT:
-        task = gl.program_id(1)
         for tile in range(task, gl.cdiv(SIZE, 1024), 256 * TILES_PER_ITER):
             _quantize_fp8_group32_tile(
                 X,

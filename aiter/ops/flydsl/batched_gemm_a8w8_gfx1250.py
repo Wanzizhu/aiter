@@ -464,7 +464,8 @@ def run_bmm_a8w8_mxfp8_32_gfx1250(
 
     ``w_scale_32x32`` selects the raw ``[B, N//32, K//32]`` block scale; else
     w_scale is the n32k4-shuffled 1x32 ``[B, N, K//32]`` (see module doc).
-    A positive worker count selects the MONO 16x16 grid and four wave32s.
+    A positive worker count selects the MONO (256, 1, 1) grid and four wave32s.
+    The worker id comes only from block_idx.x.
     Activation/scale reads are DEV and the next stage consumes DEV+HT output.
     """
     if not isinstance(persistent_workers, int) or persistent_workers not in (0, 256):

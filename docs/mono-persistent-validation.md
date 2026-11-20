@@ -1,5 +1,57 @@
 # A03/A09 mono validation
 
+## Linear worker id for all MONO ops
+
+As of 2026-11-20, this rule replaces the scheduling geometry below. Every
+MONO op uses one linear worker id from X: HIP `blockIdx.x`, FlyDSL
+`block_idx.x`, or Triton/Gluon `program_id(0)`. These paths do not read Y or Z.
+Standalone launches use grid `(256,1,1)` and block `(128,1,1)`. The mono caller
+passes the same X id with Y = Z = 0.
+
+| Op | Worker and launch change | Task mapping retained |
+| --- | --- | --- |
+| A01 mHC | Non-cluster MONO uses `blockIdx.x` and `(256,1,1)`. | `block = (w % 8) * SPLIT + w / 8`, with SPLIT = 32. |
+| A02/A04/A08/A10 GEMM | Persistent FlyDSL uses `block_idx.x` and `(256,1,1)`. | Existing N strips, M-fastest order, batch index and task stride 256. |
+| A03 dual RMSNorm | Gluon uses `program_id(0)` and `(256,1,1)`, replacing the Y worker grid. | Row ownership `w + j*256` and existing row batching. |
+| A05 RoPE/window | Both persistent kernels use `program_id(0)` and `(256,1,1)`. | Query loop starts at w; the fused Q/KV path retains the transpose below. |
+| A07 inverse RoPE | MONO uses `blockIdx.x` and `(256,1,1)`. | C16 `w*3 + wave` for waves 0..2; otherwise `w + wave*256 + j*1024`. |
+| A09 group32 FP8/QAT | Gluon uses `program_id(0)` and `(256,1,1)`, replacing the Y worker grid. | 1024-element tile ownership `w + j*256` and existing tile batching. |
+
+With X-innermost dispatch, old worker `(x,y)` has `w = x + 16*y`.
+Substitution preserves each worker's tasks and dispatch position. A05's fused
+Q/KV tile is `((w >> 4) + 16 * (w & 15)) + iteration*256`, equal to the old
+`y + 16*x + iteration*256`. This keeps adjacent tiles on workers 16 apart
+within each 16-tile strip, on the same XCC under the fixed MONO dispatch.
+
+A01's standalone `cluster_y=4` variant is not used inside mono. A compile-time
+kernel parameter keeps its old grid `(16,16,1)` and `x + 16*y` mapping.
+The cluster still groups four TGs along Y, with four splits of one tile.
+The cluster launch helper and tile computation are unchanged. A07's non-MONO
+paths also keep their original indexing and launch geometry.
+
+The A05/A07 callable harness now takes its join worker from X (`ttmp9`).
+Its contract launch and the A07 capture probe require `(256,1,1)`. Updated
+source checksums retain the frozen `handoff_sha256` values.
+The pure-Python test `op_tests/mono_rope/test_linear_worker_mapping.py` checks
+all 256 workers, split/strip/batch mappings, empty workers, tails and repeated
+iterations. Its six offline tests pass. This is not compiled GPU evidence.
+
+GPU validation is **pending**. The MI400 agent must run:
+
+- `op_tests/test_mega_mhc.py`, including the P256 midpoint test and both
+  `cluster_y=1` and `cluster_y=4`.
+- `op_tests/test_flydsl_batched_gemm.py`, with `--persistent-workers 256`
+  and the selected `--mx32-kernel` for each A02/A04/A08/A10 shape.
+- `op_tests/mono_rope/test_import.py`, `validate_handoff`, `audit_runtime`,
+  `audit_contract` and `run_contract`, with fresh artifacts and both A07
+  FP32/BF16 RoPE tables. Rebuild `capture_sentinel_args.cpp`.
+- `op_tests/triton_tests/quant/test_mono_persistent.py` for A03/A09, plus
+  `op_tests/compile_mono_persistent.py` and actual launch/ISA checks.
+
+Check work-item grid `(32768,1,1)` and workgroup `(128,1,1)` for non-cluster
+MONO dispatches. No GPU correctness or performance result is claimed for
+this change. All result sections below refer to their original revisions.
+
 ## Current acceptance contract: 2026-11-19
 
 This section replaces the earlier standalone-only scope and performance gate.

@@ -428,10 +428,12 @@ def mega_mhc(
     pack.
 
     For the gfx1250 H5120 MXFP8 attention input (A01), persistent_workers=256
-    selects the standalone MONO grid (16, 16) with four wave32s. The split32
-    variant uses one resident cohort per row tile and the native workspace.
-    cluster_y=4 groups four workgroups along Y on this grid. The mHC device
-    function is identical for 1x1 and 1x4.
+    selects the standalone MONO grid (256, 1, 1) with four wave32s and the
+    worker id from blockIdx.x. The split32 variant uses one resident cohort
+    per row tile and the native workspace.
+    The standalone cluster_y=4 variant (not used by the mono kernel) keeps grid
+    (16, 16, 1) and groups four workgroups along Y. Its tile computation and
+    split mapping are unchanged.
 
     out_dtype="mxfp8" (gfx950 and gfx1250) returns (norm, q, e8m0) in place of
     norm: the BF16 norm (T, H), float8_e4m3fn q (T, H) and uint8 E8M0 exponent

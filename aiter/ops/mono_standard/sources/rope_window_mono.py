@@ -42,7 +42,7 @@ _HEAD_BLOCK = True
 
 # C16 mono launch contract. These are compile-time choices, not new API args.
 _PERSISTENT_TGS = 256
-_PERSISTENT_GRID = (16, 16, 1)
+_PERSISTENT_GRID = (256, 1, 1)
 _NUM_WARPS = 4
 # Keep allocatable scalar registers below s104/s105. Final ISA must still be
 # audited: explicit/implicit machine-register writes are not proved by a hint.
@@ -180,7 +180,7 @@ def _rope_window_kernel(
     tl.static_assert(not (HEAD_BLOCK and EMIT_QUERY_FP8))
     # A fixed physical grid; empty workers execute no loads/stores. TOKENS
     # and SLOTS specialize the program and add no runtime kernel arguments.
-    for task in range((tl.program_id(0) + 16 * tl.program_id(1)), TOKENS * SLOTS, 256):
+    for task in range(tl.program_id(0), TOKENS * SLOTS, 256):
         token = task // SLOTS
         slot = task % SLOTS
         position = tl.load(positions + token)
@@ -487,15 +487,16 @@ def _rope_window_fp8_kernel(
 ):
     # C16: 192 query tiles + 24 KV tiles. The physical launch stays at 256
     # TG x 128 threads; 40 TG have no task. Larger shapes revisit tile+256.
-    # Traverse y first within the fixed 16x16 grid; logical KV tiles precede Q.
-    # This mapping keeps 256 workers and the same persistent-loop stride.
+    # Transpose the linear worker's low/high nibbles to keep adjacent tiles
+    # on workers 16 apart (same XCC); logical KV tiles precede Q.
     # Each tile has a single row type; query-only calls retain the same mapping.
     gl.static_assert(HEADS == 16 and D == 512 and ROPE == 64)
     gl.static_assert(EMIT_QUERY_FP8 and not HEAD_BLOCK)
     q_tiles: gl.constexpr = triton.cdiv(TOKENS * HEADS, 8)
     kv_tiles: gl.constexpr = triton.cdiv(TOKENS, 4) if SLOTS > HEADS else 0
+    w = gl.program_id(0)
     for iteration in range(triton.cdiv(q_tiles + kv_tiles, 256)):
-        tile = (gl.program_id(1) + 16 * gl.program_id(0)) + iteration * 256
+        tile = ((w >> 4) + 16 * (w & 15)) + iteration * 256
         if tile < q_tiles + kv_tiles:
             if tile >= kv_tiles:
                 _rope_window_fp8_rows(

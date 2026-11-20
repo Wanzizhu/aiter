@@ -214,7 +214,7 @@ def launch_gemm_a8w8(
     # gfx1250 CPOL: DEV=2 in bits 4:3, TH_STORE_HT=2 in bits 2:0.
     activation_policy = (2 << 3) if persistent_workers else 0
     output_policy = ((2 << 3) | 2) if persistent_workers else 0
-    # On the 16x16 physical grid, distribute the M tiles in strips of N.
+    # Use the linear X worker id to distribute the M tiles in strips of N.
     # Grouped WOa retains its native M-fastest order across the two batches.
     n_strip = 0
     if persistent_workers and ps_tasks == ps_m_tiles * ps_n_tiles:
@@ -987,7 +987,7 @@ def launch_gemm_a8w8(
                 tile_at(fx.Int32(index % mt), fx.Int32(mn % nt), fx.Int32(mn // nt))
 
         if const_expr(persistent_workers):
-            worker = fx.Int32(fx.block_idx.x) + 16 * fx.Int32(fx.block_idx.y)
+            worker = fx.Int32(fx.block_idx.x)
             if const_expr(ps_tasks == 256):
                 persistent_tile(worker)
             elif const_expr(ps_tasks < 256):
@@ -1024,7 +1024,7 @@ def launch_gemm_a8w8(
             "rocdl.cluster_dims": f"{cluster_m},{cluster_n},1" if use_cluster else None
         },
     ).launch(
-        grid=(16, 16, 1) if persistent_workers else (gx, gy, batch if batched else split_k),
+        grid=(256, 1, 1) if persistent_workers else (gx, gy, batch if batched else split_k),
         block=(block, 1, 1),
         stream=stream,
         cluster=cluster_arg,

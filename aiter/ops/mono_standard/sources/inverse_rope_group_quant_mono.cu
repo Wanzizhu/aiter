@@ -2049,7 +2049,7 @@ __attribute__((amdgpu_num_sgpr(104))) void inverse_rope_group_quant_persistent_k
                   SCALE_LAYOUT == kScaleRowMajor && TIER == kTierOff &&
                   !ROW_BASED && !ROW128_4096);
     constexpr int kWorkers = 256;
-    const int worker = static_cast<int>(blockIdx.x) + 16 * static_cast<int>(blockIdx.y);
+    const int worker = static_cast<int>(blockIdx.x);
     constexpr int kWaves = 4;
     constexpr int kWaveSize = 32;
     const int wave = __builtin_amdgcn_readfirstlane(threadIdx.x / kWaveSize);
@@ -2244,7 +2244,7 @@ void inverse_rope_group_quant(
             using cos_t = typename decltype(cos_tag)::type;
             inverse_rope_group_quant_persistent_kernel<
                 opus::bf16_t, cos_t, 512, 64, 32, 32, 1, kScaleRowMajor>
-                <<<dim3(16, 16, 1), dim3(kThreads), kLdsBytes, stream>>>(
+                <<<dim3(256, 1, 1), dim3(kThreads), kLdsBytes, stream>>>(
                     reinterpret_cast<const opus::bf16_t*>(o.data_ptr()),
                     reinterpret_cast<opus::fp8_t*>(x_fp8.data_ptr()),
                     reinterpret_cast<uint8_t*>(x_scale.data_ptr()),

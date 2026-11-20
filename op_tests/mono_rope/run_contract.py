@@ -124,7 +124,7 @@ for rank in a.ranks:
         assert initial_checks and all(c['passed'] for c in initial_checks)
         audit=json.loads(Path(str(a.suite)+'-audit-'+stage.lower()).joinpath('audit.json').read_text());item=audit['objects'][0]
         if stage=='A05':
-            symbol=item['kernels'][0]['.name'];packed=pack(captured_a05['values'],item['kernels'][0]);assert captured_a05['grid']==[16,16,1]
+            symbol=item['kernels'][0]['.name'];packed=pack(captured_a05['values'],item['kernels'][0]);assert captured_a05['grid']==[256,1,1]
         else:
             buffer,name=C.create_string_buffer(120),C.create_string_buffer(1024);assert bridge.sentinel_a07_args(buffer,name)==1
             packed,symbol=buffer.raw,name.value.decode();assert symbol in [k['.name'] for k in item['kernels']]
@@ -149,7 +149,7 @@ for rank in a.ranks:
                     delay=256 if gen==2 else 0
                     data=C.create_string_buffer(packed+struct.pack('<QQIIQII',flags.data_ptr(),monitor.data_ptr(),epoch,pattern,region_table.data_ptr(),len(regions),delay))
                     size=C.c_size_t(160);extra=(C.c_void_p*5)(1,C.addressof(data),2,C.addressof(size),3)
-                    def launch():checked(hip.hipModuleLaunchKernel(fun,16,16,1,128,1,1,8192 if stage=='A07' else 0,torch.cuda.current_stream().cuda_stream,None,extra))
+                    def launch():checked(hip.hipModuleLaunchKernel(fun,256,1,1,128,1,1,8192 if stage=='A07' else 0,torch.cuda.current_stream().cuda_stream,None,extra))
                     mode='graph' if gen in [2,3] else 'eager'
                     if mode=='graph':
                         graph=torch.cuda.CUDAGraph()

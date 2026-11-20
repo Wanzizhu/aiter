@@ -4,13 +4,13 @@
     "origin": "ATOM frozen handoff ceil_pow2_code and window_row function excerpts; FP8 constants bound explicitly to the gfx1250 E4M3FN operator contract"
   },
   "sources/rope_window_mono.py": {
-    "sha256": "8f5f75c621cdcfb190435546cc2bc230aeab1d6237f0b9d632ac03316b33b333",
+    "sha256": "a38675dd660912e4eb08871360bf7b9a2331b81e20c27be8e3ae9b9c429e9e95",
     "handoff_sha256": "07d8a8910cb53650b760631e13a13077cc0e3cdbc1ba750a2fe085d9c75c6c72",
-    "migration": "package imports only"
+    "migration": "worker id from program_id(0)/blockIdx.x, grid (256,1,1)"
   },
   "sources/inverse_rope_group_quant_mono.cu": {
-    "sha256": "8d6e3f86ebcfec041522ccd4dfd60f7695345c5fdfa495cbcfecb614f12f4a95",
+    "sha256": "f851a8865485eded2afdad245379c56b14a44c3eb68c93c67c7812c94095de30",
     "handoff_sha256": "8d6e3f86ebcfec041522ccd4dfd60f7695345c5fdfa495cbcfecb614f12f4a95",
-    "migration": "byte-identical"
+    "migration": "worker id from program_id(0)/blockIdx.x, grid (256,1,1)"
   }
 }

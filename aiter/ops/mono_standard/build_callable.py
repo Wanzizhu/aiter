@@ -71,9 +71,7 @@ mono_harness:
     s_mov_b64 s[96:97], s[0:1]
     v_readfirstlane_b32 s98, v0
     s_lshr_b32 s98, s98, 5
-    s_and_b32 s99, ttmp7, 0xffff
-    s_lshl_b32 s99, s99, 4
-    s_add_co_u32 s99, s99, ttmp9
+    s_mov_b32 s99, ttmp9
     s_load_b64 s[104:105], s[96:97], 136
     s_load_b32 s102, s[96:97], 156
     s_wait_kmcnt 0

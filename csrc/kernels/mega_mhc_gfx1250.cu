@@ -1415,7 +1415,7 @@ __device__ __forceinline__ void tiles(char* smem,
 // Tokens [0, tail_token0) use C tiles. With a TAIL config, the remaining
 // tokens use TAIL's split tiles in the same launch, starting on the CUs that
 // the last full round of C tiles leaves idle.
-template <class C, class TAIL, bool HAS_POST, bool IDENTITY_PRE, bool MXFP8>
+template <class C, class TAIL, bool HAS_POST, bool IDENTITY_PRE, bool MXFP8, bool CLUSTER = false>
 __global__ __launch_bounds__(C::THREADS, 1) void mega_mhc_kernel(const bf16* residual,
                                                                  const bf16* sublayer,
                                                                  const float* post_mix,
@@ -1459,7 +1459,10 @@ __global__ __launch_bounds__(C::THREADS, 1) void mega_mhc_kernel(const bf16* res
     {
         // P256 contains eight complete split32 cohorts. Adjacent TGs work on
         // different tiles; successive splits of one tile have a stride of 8.
-        const int task = blockIdx.x + 16 * blockIdx.y;
+        int task = blockIdx.x;
+        // Only the standalone cluster variant keeps the two-dimensional grid.
+        if constexpr(CLUSTER)
+            task = blockIdx.x + 16 * blockIdx.y;
         block = (task % 8) * C::SPLIT + task / 8;
     }
     if(std::is_void_v<TAIL> || block < body_blocks)
@@ -1689,7 +1692,7 @@ void launch(int body_blocks,
         return;
     const hipStream_t stream = getCurrentHIPStream();
     int tail_token0          = t;
-    dim3 grid = C::MONO ? dim3(16, 16, 1) : dim3(C::SPLIT == 1 ? blocks : blocks * split_k);
+    dim3 grid = C::MONO ? dim3(256, 1, 1) : dim3(C::SPLIT == 1 ? blocks : blocks * split_k);
     if constexpr(!std::is_void_v<TAIL>)
     {
         static_assert(C::SPLIT == 1 && COMPACT);
@@ -1748,8 +1751,8 @@ void launch(int body_blocks,
         if(cluster_y == 1)
             LAUNCH(true, false, true);
         else
-            launch_ps_cluster(mega_mhc_kernel<C, TAIL, true, false, true>,
-                              grid, C::THREADS, cluster_y, stream, MHC_ARGS);
+            launch_ps_cluster(mega_mhc_kernel<C, TAIL, true, false, true, true>,
+                              dim3(16, 16, 1), C::THREADS, cluster_y, stream, MHC_ARGS);
     }
     else if(mxfp8)
     {
